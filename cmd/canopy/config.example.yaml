@@ -1,0 +1,67 @@
+# canopy configuration
+# On first run this file is written to $XDG_CONFIG_HOME/canopy/config.yaml
+# (default: ~/.config/canopy/config.yaml).
+
+# Profiles connect to task backends. Each profile targets one project/org.
+profiles:
+  # Azure Boards example
+  - name: Work
+    backend: azure-boards
+    org: my-azure-org         # Azure DevOps organisation
+    project: my-project       # Azure DevOps project name
+    team:                     # team members to track (display names or emails)
+      - alice@example.com
+      - bob@example.com
+
+  # GitHub Issues example
+  # - name: OSS
+  #   backend: github
+  #   owner: my-github-username
+  #   repos:
+  #     - my-repo
+  #     - other-repo
+
+  # Jira example
+  # - name: Platform
+  #   backend: jira
+  #   url: https://mycompany.atlassian.net
+  #   project: PLAT
+  #   team:
+  #     - alice
+  #     - bob
+
+  # Linear example
+  # - name: Product
+  #   backend: linear
+  #   team_id: my-team-id
+
+# Views are named filter presets for meetings and workflows.
+# Each view selects a subset of tasks to display.
+views:
+  - name: Weekly Standup
+    description: Features and fixes completed or in progress this past week
+    filters:
+      updated_since: last_week
+      types:
+        - feature
+        - bug
+        - user-story
+      status:
+        - done
+        - in-review
+        - in-progress
+
+  - name: Sprint Review
+    description: Work completed in the current sprint
+    filters:
+      sprint: current
+      status:
+        - done
+
+  - name: My Tasks
+    description: Tasks assigned to me
+    filters:
+      assignee: me
+
+# How often (in seconds) the dashboard auto-refreshes in the background.
+refresh_secs: 300
