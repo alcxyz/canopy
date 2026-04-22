@@ -54,8 +54,12 @@ type Profile struct {
 	// Linear
 	TeamID string `yaml:"team_id"`
 
+	// Azure Boards team name (defaults to "{Project} Team")
+	AzureTeam string `yaml:"azure_team"`
+
 	// Common
-	Team []string `yaml:"team"` // team member identifiers
+	Team      []string `yaml:"team"`       // team member identifiers
+	TokenFile string   `yaml:"token_file"` // path to file containing auth token
 }
 
 // Config is the top-level canopy configuration.
