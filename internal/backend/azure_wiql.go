@@ -2,6 +2,7 @@ package backend
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/alcxyz/canopy/internal/config"
@@ -67,9 +68,15 @@ func mapAzureType(s string) model.TaskType {
 // ── WIQL query builder ──────────────────────────────────────────────────
 
 // buildWIQL constructs a WIQL query from a canopy filter.
+// project scopes results to a single Azure DevOps project.
 // iterPath is the resolved iteration path (only needed when filter.Sprint == "current").
-func buildWIQL(filter config.Filter, team []string, iterPath string) string {
+func buildWIQL(filter config.Filter, project string, team []string, iterPath string) string {
 	var clauses []string
+
+	// Always scope to the configured project.
+	if project != "" {
+		clauses = append(clauses, fmt.Sprintf("[System.TeamProject] = %s", quote(project)))
+	}
 
 	// Types
 	if len(filter.Types) > 0 {
@@ -165,6 +172,13 @@ func updatedSinceDays(s string) int {
 	case "last_quarter":
 		return 90
 	default:
+		// Support "last_N_days" dynamic format.
+		if strings.HasPrefix(s, "last_") && strings.HasSuffix(s, "_days") {
+			mid := s[len("last_") : len(s)-len("_days")]
+			if n, err := strconv.Atoi(mid); err == nil {
+				return n
+			}
+		}
 		return 0
 	}
 }

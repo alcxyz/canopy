@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,37 +16,65 @@ import (
 type tasksLoadedMsg struct {
 	myTasks   []model.Task
 	teamTasks []model.Task
+	doneTasks []model.Task
 	err       error
 }
 
 type tickMsg time.Time
+type ggTimeoutMsg struct{}
 
 // ── Commands ────────────────────────────────────────────────────────────
 
+// loadAllTasks fetches my tasks, team tasks (active only), and done tasks
+// using the current dateScope for time-bounding.
 func (m Model) loadAllTasks() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		var myTasks, teamTasks []model.Task
+		days := dateScopeDays(m.dateScope)
+		scope := fmt.Sprintf("last_%d_days", days)
+
+		var myTasks, teamTasks, doneTasks []model.Task
 
 		for _, b := range m.backends {
-			// My tasks
-			my, err := b.ListTasks(ctx, config.Filter{Assignee: "me"})
+			// My active tasks (not done/closed)
+			my, err := b.ListTasks(ctx, config.Filter{
+				Assignee:     "me",
+				Status:       []string{"todo", "in-progress", "in-review"},
+				UpdatedSince: scope,
+			})
 			if err != nil {
 				return tasksLoadedMsg{err: err}
 			}
 			myTasks = append(myTasks, my...)
 
-			// Team tasks (no assignee filter — returns all)
-			all, err := b.ListTasks(ctx, config.Filter{})
+			// Team active tasks (not done/closed)
+			team, err := b.ListTasks(ctx, config.Filter{
+				Status:       []string{"todo", "in-progress", "in-review"},
+				UpdatedSince: scope,
+			})
 			if err != nil {
 				return tasksLoadedMsg{err: err}
 			}
-			teamTasks = append(teamTasks, all...)
+			teamTasks = append(teamTasks, team...)
+
+			// Done/closed tasks
+			done, err := b.ListTasks(ctx, config.Filter{
+				Status:       []string{"done", "closed"},
+				UpdatedSince: scope,
+			})
+			if err != nil {
+				return tasksLoadedMsg{err: err}
+			}
+			doneTasks = append(doneTasks, done...)
 		}
 
-		return tasksLoadedMsg{myTasks: myTasks, teamTasks: teamTasks}
+		return tasksLoadedMsg{
+			myTasks:   myTasks,
+			teamTasks: teamTasks,
+			doneTasks: doneTasks,
+		}
 	}
 }
 

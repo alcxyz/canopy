@@ -5,12 +5,12 @@
 # Profiles connect to task backends. Each profile targets one project/org.
 profiles:
   # Azure Boards example
+  # Authenticates via `az` CLI — run `az login` before starting canopy.
   - name: Work
     backend: azure-boards
     org: my-azure-org         # Azure DevOps organisation
     project: my-project       # Azure DevOps project name
     # azure_team: My Team     # optional: defaults to "{project} Team"
-    # token_file: /run/secrets/azure-devops-pat  # or set AZURE_DEVOPS_PAT env var
     team:                     # team members to track (display names or emails)
       - alice@example.com
       - bob@example.com

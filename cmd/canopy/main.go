@@ -38,7 +38,13 @@ func main() {
 	defer logFile.Close()
 
 	p := tea.NewProgram(
-		app.New(cfg),
+		app.New(app.Options{
+			Cfg:      cfg,
+			Version:  "0.1.0",
+			LogPath:  config.LogPath(),
+			CfgPath:  config.ConfigPath(),
+			CacheDir: config.CacheDir(),
+		}),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

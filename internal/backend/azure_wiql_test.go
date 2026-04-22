@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuildWIQL_EmptyFilter(t *testing.T) {
-	q := buildWIQL(config.Filter{}, nil, "")
+	q := buildWIQL(config.Filter{}, "", nil, "")
 	want := "SELECT [System.Id] FROM WorkItems ORDER BY [System.ChangedDate] DESC"
 	if q != want {
 		t.Errorf("got:\n  %s\nwant:\n  %s", q, want)
@@ -16,14 +16,14 @@ func TestBuildWIQL_EmptyFilter(t *testing.T) {
 }
 
 func TestBuildWIQL_Types(t *testing.T) {
-	q := buildWIQL(config.Filter{Types: []string{"feature", "bug"}}, nil, "")
+	q := buildWIQL(config.Filter{Types: []string{"feature", "bug"}}, "", nil, "")
 	if !strings.Contains(q, "[System.WorkItemType] IN ('Feature', 'Bug')") {
 		t.Errorf("expected type clause, got: %s", q)
 	}
 }
 
 func TestBuildWIQL_Status(t *testing.T) {
-	q := buildWIQL(config.Filter{Status: []string{"in-progress", "done"}}, nil, "")
+	q := buildWIQL(config.Filter{Status: []string{"in-progress", "done"}}, "", nil, "")
 	if !strings.Contains(q, "[System.State] IN (") {
 		t.Errorf("expected state clause, got: %s", q)
 	}
@@ -37,14 +37,14 @@ func TestBuildWIQL_Status(t *testing.T) {
 }
 
 func TestBuildWIQL_AssigneeMe(t *testing.T) {
-	q := buildWIQL(config.Filter{Assignee: "me"}, nil, "")
+	q := buildWIQL(config.Filter{Assignee: "me"}, "", nil, "")
 	if !strings.Contains(q, "[System.AssignedTo] = @me") {
 		t.Errorf("expected @me clause, got: %s", q)
 	}
 }
 
 func TestBuildWIQL_AssigneeSpecific(t *testing.T) {
-	q := buildWIQL(config.Filter{Assignee: "alice@example.com"}, nil, "")
+	q := buildWIQL(config.Filter{Assignee: "alice@example.com"}, "", nil, "")
 	if !strings.Contains(q, "[System.AssignedTo] = 'alice@example.com'") {
 		t.Errorf("expected specific assignee, got: %s", q)
 	}
@@ -52,7 +52,7 @@ func TestBuildWIQL_AssigneeSpecific(t *testing.T) {
 
 func TestBuildWIQL_TeamFilter(t *testing.T) {
 	team := []string{"alice@example.com", "bob@example.com"}
-	q := buildWIQL(config.Filter{}, team, "")
+	q := buildWIQL(config.Filter{}, "", team, "")
 	if !strings.Contains(q, "[System.AssignedTo] IN ('alice@example.com', 'bob@example.com')") {
 		t.Errorf("expected team IN clause, got: %s", q)
 	}
@@ -60,7 +60,7 @@ func TestBuildWIQL_TeamFilter(t *testing.T) {
 
 func TestBuildWIQL_TeamIgnoredWhenAssigneeSet(t *testing.T) {
 	team := []string{"alice@example.com"}
-	q := buildWIQL(config.Filter{Assignee: "me"}, team, "")
+	q := buildWIQL(config.Filter{Assignee: "me"}, "", team, "")
 	// Should use @me, not the team IN clause
 	if strings.Contains(q, "IN (") {
 		t.Errorf("team filter should not be used when assignee is set, got: %s", q)
@@ -68,21 +68,21 @@ func TestBuildWIQL_TeamIgnoredWhenAssigneeSet(t *testing.T) {
 }
 
 func TestBuildWIQL_UpdatedSince(t *testing.T) {
-	q := buildWIQL(config.Filter{UpdatedSince: "last_week"}, nil, "")
+	q := buildWIQL(config.Filter{UpdatedSince: "last_week"}, "", nil, "")
 	if !strings.Contains(q, "[System.ChangedDate] >= @today - 7") {
 		t.Errorf("expected date clause, got: %s", q)
 	}
 }
 
 func TestBuildWIQL_Sprint(t *testing.T) {
-	q := buildWIQL(config.Filter{Sprint: "current"}, nil, "Project\\Sprint 5")
+	q := buildWIQL(config.Filter{Sprint: "current"}, "", nil, "Project\\Sprint 5")
 	if !strings.Contains(q, "[System.IterationPath] = 'Project\\Sprint 5'") {
 		t.Errorf("expected iteration clause, got: %s", q)
 	}
 }
 
 func TestBuildWIQL_Labels(t *testing.T) {
-	q := buildWIQL(config.Filter{Labels: []string{"frontend", "priority-high"}}, nil, "")
+	q := buildWIQL(config.Filter{Labels: []string{"frontend", "priority-high"}}, "", nil, "")
 	if !strings.Contains(q, "[System.Tags] CONTAINS 'frontend'") {
 		t.Errorf("expected first tag clause, got: %s", q)
 	}
@@ -97,11 +97,18 @@ func TestBuildWIQL_Combined(t *testing.T) {
 		Status:       []string{"in-progress"},
 		UpdatedSince: "last_week",
 		Assignee:     "me",
-	}, nil, "")
+	}, "", nil, "")
 
 	// All clauses joined with AND
 	if strings.Count(q, " AND ") != 3 {
 		t.Errorf("expected 3 AND clauses, got: %s", q)
+	}
+}
+
+func TestBuildWIQL_ProjectFilter(t *testing.T) {
+	q := buildWIQL(config.Filter{}, "Bullet", nil, "")
+	if !strings.Contains(q, "[System.TeamProject] = 'Bullet'") {
+		t.Errorf("expected project clause, got: %s", q)
 	}
 }
 

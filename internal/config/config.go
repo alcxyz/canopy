@@ -58,8 +58,7 @@ type Profile struct {
 	AzureTeam string `yaml:"azure_team"`
 
 	// Common
-	Team      []string `yaml:"team"`       // team member identifiers
-	TokenFile string   `yaml:"token_file"` // path to file containing auth token
+	Team []string `yaml:"team"` // team member identifiers
 }
 
 // Config is the top-level canopy configuration.

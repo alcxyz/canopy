@@ -2,12 +2,11 @@ package backend
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +18,6 @@ import (
 type azureBoards struct {
 	profile config.Profile
 	client  *http.Client
-	token   string
 	baseURL string // https://dev.azure.com/{org}/{project}
 }
 
@@ -27,44 +25,47 @@ func newAzureBoards(p config.Profile) (Backend, error) {
 	if p.Org == "" || p.Project == "" {
 		return nil, fmt.Errorf("azure-boards: org and project are required")
 	}
-	token, err := resolveToken(p)
-	if err != nil {
-		return nil, fmt.Errorf("azure-boards: %w", err)
-	}
 	return &azureBoards{
 		profile: p,
 		client:  &http.Client{Timeout: 30 * time.Second},
-		token:   token,
 		baseURL: fmt.Sprintf("https://dev.azure.com/%s/%s", p.Org, p.Project),
 	}, nil
 }
 
-func resolveToken(p config.Profile) (string, error) {
-	if v := os.Getenv("AZURE_DEVOPS_PAT"); v != "" {
-		return v, nil
-	}
-	if p.TokenFile != "" {
-		data, err := os.ReadFile(p.TokenFile)
-		if err != nil {
-			return "", fmt.Errorf("reading token_file %q: %w", p.TokenFile, err)
-		}
-		return strings.TrimSpace(string(data)), nil
-	}
-	return "", fmt.Errorf("set AZURE_DEVOPS_PAT env var or token_file in config")
-}
-
 func (a *azureBoards) Name() string { return a.profile.Name }
 
-func (a *azureBoards) authHeader() string {
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+a.token))
+// getAzToken acquires a short-lived Bearer token for Azure DevOps via the az CLI.
+// The az CLI caches and refreshes tokens internally; no caching is needed here.
+func getAzToken(ctx context.Context) (string, error) {
+	const azureDevOpsResource = "499b84ac-1321-427f-aa17-267ca6975798"
+	out, err := exec.CommandContext(ctx, "az", "account", "get-access-token",
+		"--resource", azureDevOpsResource).Output()
+	if err != nil {
+		return "", fmt.Errorf("azure-boards: az CLI not found or not logged in — run 'az login' first")
+	}
+	var result struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return "", fmt.Errorf("azure-boards: failed to parse az token response: %w", err)
+	}
+	if result.AccessToken == "" {
+		return "", fmt.Errorf("azure-boards: az returned empty access token — run 'az login' first")
+	}
+	return result.AccessToken, nil
 }
 
 func (a *azureBoards) doRequest(ctx context.Context, method, url string, body io.Reader) ([]byte, error) {
+	token, err := getAzToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", a.authHeader())
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.client.Do(req)
@@ -96,7 +97,7 @@ func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]mo
 		iterPath = path
 	}
 
-	query := buildWIQL(filter, a.profile.Team, iterPath)
+	query := buildWIQL(filter, a.profile.Project, a.profile.Team, iterPath)
 	ids, err := a.queryWIQL(ctx, query)
 	if err != nil {
 		return nil, err
@@ -105,7 +106,15 @@ func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]mo
 		return nil, nil
 	}
 
-	return a.fetchWorkItems(ctx, ids)
+	tasks, err := a.fetchWorkItems(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve parent titles in a single batch.
+	a.resolveParentTitles(ctx, tasks)
+
+	return tasks, nil
 }
 
 func (a *azureBoards) queryWIQL(ctx context.Context, query string) ([]int, error) {
@@ -144,7 +153,7 @@ func (a *azureBoards) fetchWorkItems(ctx context.Context, ids []int) ([]model.Ta
 			idStrs[j] = strconv.Itoa(id)
 		}
 
-		url := fmt.Sprintf("%s/_apis/wit/workitems?ids=%s&$expand=links&api-version=7.0",
+		url := fmt.Sprintf("%s/_apis/wit/workitems?ids=%s&$expand=all&api-version=7.0",
 			a.baseURL, strings.Join(idStrs, ","))
 		data, err := a.doRequest(ctx, "GET", url, nil)
 		if err != nil {
@@ -162,6 +171,80 @@ func (a *azureBoards) fetchWorkItems(ctx context.Context, ids []int) ([]model.Ta
 	}
 
 	return tasks, nil
+}
+
+// resolveParentTitles batch-fetches parent work item titles and fills
+// them into the tasks. Best-effort: errors are silently ignored.
+func (a *azureBoards) resolveParentTitles(ctx context.Context, tasks []model.Task) {
+	// Collect unique parent IDs that aren't already in the task set.
+	taskIDs := map[string]bool{}
+	for _, t := range tasks {
+		taskIDs[t.ID] = true
+	}
+	parentIDs := map[string]bool{}
+	for _, t := range tasks {
+		if t.ParentID != "" && !taskIDs[t.ParentID] {
+			parentIDs[t.ParentID] = true
+		}
+	}
+	if len(parentIDs) == 0 {
+		// All parents are in the task set already — resolve from there.
+		titleMap := map[string]string{}
+		for _, t := range tasks {
+			titleMap[t.ID] = t.Title
+		}
+		for i := range tasks {
+			if tasks[i].ParentID != "" {
+				tasks[i].ParentTitle = titleMap[tasks[i].ParentID]
+			}
+		}
+		return
+	}
+
+	// Fetch parent work items (just need titles).
+	var ids []int
+	for id := range parentIDs {
+		if n, err := strconv.Atoi(id); err == nil {
+			ids = append(ids, n)
+		}
+	}
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = strconv.Itoa(id)
+	}
+
+	titleMap := map[string]string{}
+	// Also include titles from tasks we already have.
+	for _, t := range tasks {
+		titleMap[t.ID] = t.Title
+	}
+
+	// Batch fetch in chunks of 200.
+	for i := 0; i < len(idStrs); i += 200 {
+		end := i + 200
+		if end > len(idStrs) {
+			end = len(idStrs)
+		}
+		url := fmt.Sprintf("%s/_apis/wit/workitems?ids=%s&fields=System.Title&api-version=7.0",
+			a.baseURL, strings.Join(idStrs[i:end], ","))
+		data, err := a.doRequest(ctx, "GET", url, nil)
+		if err != nil {
+			continue // best-effort
+		}
+		var resp workItemsResponse
+		if err := json.Unmarshal(data, &resp); err != nil {
+			continue
+		}
+		for _, wi := range resp.Value {
+			titleMap[strconv.Itoa(wi.ID)] = wi.Fields.Title
+		}
+	}
+
+	for i := range tasks {
+		if tasks[i].ParentID != "" {
+			tasks[i].ParentTitle = titleMap[tasks[i].ParentID]
+		}
+	}
 }
 
 func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
@@ -185,6 +268,11 @@ func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
 		}
 	}
 
+	parentID := ""
+	if wi.Fields.Parent > 0 {
+		parentID = strconv.Itoa(wi.Fields.Parent)
+	}
+
 	return model.Task{
 		ID:        strconv.Itoa(wi.ID),
 		Title:     wi.Fields.Title,
@@ -196,6 +284,7 @@ func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
 		URL:       webURL,
 		Profile:   a.profile.Name,
 		Backend:   string(config.BackendAzureBoards),
+		ParentID:  parentID,
 		CreatedAt: wi.Fields.CreatedDate,
 		UpdatedAt: wi.Fields.ChangedDate,
 	}
@@ -300,6 +389,7 @@ type workItemFields struct {
 	AssignedTo    assignedTo    `json:"System.AssignedTo"`
 	Tags          string        `json:"System.Tags"`
 	IterationPath string        `json:"System.IterationPath"`
+	Parent        int           `json:"System.Parent"`
 	CreatedDate   time.Time     `json:"System.CreatedDate"`
 	ChangedDate   time.Time     `json:"System.ChangedDate"`
 }
