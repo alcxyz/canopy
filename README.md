@@ -70,12 +70,34 @@ refresh_secs: 300
 
 ### Supported backends
 
-| Backend | `backend:` value | Required fields |
-|---------|-----------------|-----------------|
-| Azure Boards | `azure-boards` | `org`, `project` |
-| GitHub Issues | `github` | `owner`, `repos` |
-| Jira | `jira` | `url`, `project` |
-| Linear | `linear` | `team_id` |
+| Backend | `backend:` value | Required fields | Status |
+|---------|-----------------|-----------------|--------|
+| Azure Boards | `azure-boards` | `org`, `project` | Implemented |
+| GitHub Issues | `github` | `owner`, `repos` | Stubbed |
+| Jira | `jira` | `url`, `project` | Stubbed |
+| Linear | `linear` | `team_id` | Stubbed |
+
+### Authentication
+
+**Azure Boards** requires a Personal Access Token (PAT) with Work Items read scope. Provide it via:
+
+1. Environment variable: `export AZURE_DEVOPS_PAT=your-token`
+2. Token file: add `token_file: /path/to/pat` to the profile (works with sops-nix)
+
+Optional: set `azure_team` on the profile if your Azure DevOps team name differs from the default `"{project} Team"`.
+
+### View filters
+
+Views support these filter fields:
+
+| Filter | Values | Example |
+|--------|--------|---------|
+| `updated_since` | `today`, `yesterday`, `last_week`, `last_2_weeks`, `last_month`, `last_quarter` | `last_week` |
+| `types` | `feature`, `bug`, `user-story`, `task`, `epic` | `[feature, bug]` |
+| `status` | `todo`, `in-progress`, `in-review`, `done`, `closed` | `[done, in-progress]` |
+| `sprint` | `current`, or a sprint/iteration name | `current` |
+| `assignee` | `me`, or a name/email | `me` |
+| `labels` | tag names | `[frontend, priority-high]` |
 
 ### Files
 
@@ -91,12 +113,16 @@ refresh_secs: 300
 |-----|--------|
 | `h` / `l` | Previous / next tab |
 | `j` / `k` | Move down / up |
+| `g` / `G` | First / last item |
 | `1` `2` `3` | Switch to tab directly |
+| `r` | Refresh tasks |
+| `enter` | Select view (Views tab) |
+| `o` | Open task in browser |
 | `q` / `ctrl+c` | Quit |
 
 ## Status
 
-Canopy is in early development. Backend implementations are stubbed — Azure Boards will be the first to be fully implemented.
+Azure Boards is fully implemented. GitHub Issues, Jira, and Linear backends are stubbed and ready for implementation.
 
 ## License
 

@@ -5,10 +5,12 @@
 # Profiles connect to task backends. Each profile targets one project/org.
 profiles:
   # Azure Boards example
+  # Authenticates via `az` CLI — run `az login` before starting canopy.
   - name: Work
     backend: azure-boards
     org: my-azure-org         # Azure DevOps organisation
     project: my-project       # Azure DevOps project name
+    # azure_team: My Team     # optional: defaults to "{project} Team"
     team:                     # team members to track (display names or emails)
       - alice@example.com
       - bob@example.com
@@ -62,6 +64,14 @@ views:
     description: Tasks assigned to me
     filters:
       assignee: me
+
+# Preset tags for the t cycle filter. These always appear first;
+# tags discovered from task data are appended automatically.
+tags:
+  # - blocked
+  # - tech-debt
+  # - needs-review
+  # - P1
 
 # How often (in seconds) the dashboard auto-refreshes in the background.
 refresh_secs: 300
