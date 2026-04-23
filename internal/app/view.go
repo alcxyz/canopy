@@ -54,6 +54,9 @@ func (m Model) View() string {
 	if m.showDetail {
 		return m.renderDetail()
 	}
+	if m.showForm {
+		return m.renderForm()
+	}
 
 	var b strings.Builder
 
@@ -226,6 +229,7 @@ Filters:
   esc                      clear all filters
 
 Actions:
+  c                        create work item
   enter                    navigate into task (show subtasks) · select view
   esc / backspace          navigate back · clear filters
   [ / ]                    prev / next sibling task

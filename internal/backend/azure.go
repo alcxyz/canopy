@@ -1,11 +1,13 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -63,7 +65,11 @@ func getAzToken(ctx context.Context) (string, error) {
 	return result.AccessToken, nil
 }
 
-func (a *azureBoards) doRequest(ctx context.Context, method, url string, body io.Reader) ([]byte, error) {
+func (a *azureBoards) doRequest(ctx context.Context, method, reqURL string, body io.Reader) ([]byte, error) {
+	return a.doRequestCT(ctx, method, reqURL, body, "application/json")
+}
+
+func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, body io.Reader, contentType string) ([]byte, error) {
 	acquire()
 	defer release()
 
@@ -72,12 +78,12 @@ func (a *azureBoards) doRequest(ctx context.Context, method, url string, body io
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -375,7 +381,96 @@ func (a *azureBoards) ListTeam(_ context.Context) ([]model.TeamMember, error) {
 	return members, nil
 }
 
+// ── CreateTask ──────────────────────────────────────────────────────────
+
+// CurrentIteration returns the current sprint iteration path.
+func (a *azureBoards) CurrentIteration(ctx context.Context) (string, error) {
+	return a.currentIterationPath(ctx)
+}
+
+// CreateTask creates a new work item in Azure DevOps.
+func (a *azureBoards) CreateTask(ctx context.Context, params CreateTaskParams) (CreateTaskResult, error) {
+	azType, ok := typeToAzure[params.Type]
+	if !ok {
+		return CreateTaskResult{}, fmt.Errorf("unsupported work item type: %s", params.Type)
+	}
+
+	ops := []jsonPatchOp{
+		{Op: "add", Path: "/fields/System.Title", Value: params.Title},
+	}
+	if params.Description != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.Description",
+			Value: plainTextToHTML(params.Description),
+		})
+	}
+	if params.Iteration != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.IterationPath",
+			Value: params.Iteration,
+		})
+	}
+	if params.Assignee != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.AssignedTo",
+			Value: params.Assignee,
+		})
+	}
+	if params.ParentID != "" {
+		parentURL := fmt.Sprintf("https://dev.azure.com/%s/_apis/wit/workItems/%s",
+			a.profile.Org, params.ParentID)
+		ops = append(ops, jsonPatchOp{
+			Op:   "add",
+			Path: "/relations/-",
+			Value: relationValue{
+				Rel: "System.LinkTypes.Hierarchy-Reverse",
+				URL: parentURL,
+			},
+		})
+	}
+
+	body, err := json.Marshal(ops)
+	if err != nil {
+		return CreateTaskResult{}, fmt.Errorf("marshalling patch document: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/_apis/wit/workitems/$%s?api-version=7.0",
+		a.baseURL, url.PathEscape(azType))
+
+	data, err := a.doRequestCT(ctx, "PATCH", reqURL, bytes.NewReader(body),
+		"application/json-patch+json")
+	if err != nil {
+		return CreateTaskResult{}, fmt.Errorf("creating work item: %w", err)
+	}
+
+	var wi workItem
+	if err := json.Unmarshal(data, &wi); err != nil {
+		return CreateTaskResult{}, fmt.Errorf("parsing created work item: %w", err)
+	}
+
+	return CreateTaskResult{Task: a.mapWorkItem(wi)}, nil
+}
+
 // ── Azure DevOps response types ─────────────────────────────────────────
+
+type jsonPatchOp struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value"`
+}
+
+type relationValue struct {
+	Rel string `json:"rel"`
+	URL string `json:"url"`
+}
+
+func plainTextToHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\n", "<br>\n")
+	return s
+}
 
 type wiqlResponse struct {
 	WorkItems []struct {

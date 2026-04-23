@@ -4,3 +4,4 @@
 | [ADR-002](ADR-002-azure-auth-via-az-cli.md) | Azure authentication via az CLI | auth |
 | [ADR-003](ADR-003-tui-navigation-and-filtering.md) | TUI navigation and filtering model | UX |
 | [ADR-004](ADR-004-task-drill-down-navigation.md) | Task drill-down navigation | UX |
+| [ADR-005](ADR-005-optional-task-creator-interface.md) | Optional TaskCreator interface for write operations | architecture |

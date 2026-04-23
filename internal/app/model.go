@@ -72,6 +72,17 @@ type Model struct {
 	showDetail bool
 	detailTask model.Task
 
+	// Create-form overlay
+	showForm       bool
+	formField      int    // 0=type, 1=title, 2=description
+	formType       int    // index into formTypes
+	formTitle      string
+	formDesc       string
+	formIteration  string // resolved current iteration path
+	formAssignee   string // default assignee display name
+	formErr        string
+	formSubmitting bool
+
 	// Cache
 	cache        *cache.Store
 	tasksLoadedAt time.Time // when the current data was fetched

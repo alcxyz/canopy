@@ -23,6 +23,29 @@ type Backend interface {
 	ListTeam(ctx context.Context) ([]model.TeamMember, error)
 }
 
+// CreateTaskParams holds the inputs for creating a new work item.
+type CreateTaskParams struct {
+	Type        model.TaskType
+	Title       string
+	Description string // plain text; backends convert to their native format
+	ParentID    string // optional parent work item ID
+	Iteration   string // iteration/sprint path; empty = backend default
+	Assignee    string // display name or email; empty = unassigned
+}
+
+// CreateTaskResult holds the outcome of a successful creation.
+type CreateTaskResult struct {
+	Task model.Task
+}
+
+// TaskCreator is an optional interface for backends that support creating
+// work items. Check with: if creator, ok := b.(TaskCreator); ok { ... }
+type TaskCreator interface {
+	CreateTask(ctx context.Context, params CreateTaskParams) (CreateTaskResult, error)
+	// CurrentIteration returns the current sprint/iteration path.
+	CurrentIteration(ctx context.Context) (string, error)
+}
+
 // New creates a Backend from a profile configuration.
 func New(profile config.Profile) (Backend, error) {
 	switch profile.Backend {

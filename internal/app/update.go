@@ -38,6 +38,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleDetailKey(km)
 		}
 	}
+	if m.showForm {
+		if km, ok := msg.(tea.KeyMsg); ok {
+			return m.handleFormKey(km)
+		}
+	}
 
 	// In text-filter mode, handle input first.
 	if m.filtering {
@@ -61,6 +66,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("%d my · %d team · %d done",
 				len(m.myTasks), len(m.teamTasks), len(m.doneTasks))
 			m.saveCachedTasks()
+		}
+		return m, nil
+
+	case taskCreatedMsg:
+		m.formSubmitting = false
+		if msg.err != nil {
+			m.formErr = msg.err.Error()
+			return m, nil
+		}
+		m.showForm = false
+		m.statusMsg = fmt.Sprintf("Created %s #%s: %s", msg.task.Type, msg.task.ID, msg.task.Title)
+		m.loading = true
+		return m, m.loadAllTasks()
+
+	case iterationResolvedMsg:
+		if msg.err == nil {
+			m.formIteration = msg.path
 		}
 		return m, nil
 
@@ -224,6 +246,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	// Actions
+	case "c":
+		if m.activeTab != tabViews && m.canCreate() {
+			m.showForm = true
+			m.formField = formFieldTitle
+			m.formTitle = ""
+			m.formDesc = ""
+			m.formErr = ""
+			m.formSubmitting = false
+			m.formType = m.defaultFormTypeIndex()
+			m.formAssignee = m.defaultAssignee()
+			m.formIteration = ""
+			return m, m.resolveIteration()
+		}
+
 	case "r":
 		if len(m.backends) > 0 {
 			m.loading = true
