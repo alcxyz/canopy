@@ -9,7 +9,10 @@ import (
 )
 
 // timeBuckets are the fixed date-range labels for the f date-cycle filter.
-var timeBuckets = []string{"this week", "last week", "this month", "last month", "this quarter", "last quarter"}
+var timeBuckets = []string{"today", "yesterday", "this week", "last week", "this month", "last month", "this quarter", "last quarter", "last 6 months", "prior 6 months"}
+
+// dateFields are the available timestamp fields for the F date-field cycle.
+var dateFields = []string{"updated", "created", "start", "target", "closed", "state changed"}
 
 // dateInBucket returns true if t falls within the named time bucket.
 func dateInBucket(t time.Time, label string) bool {
@@ -50,6 +53,13 @@ func dateInBucket(t time.Time, label string) bool {
 		qStart := time.Date(y, ((mo-1)/3)*3+1, 1, 0, 0, 0, 0, loc)
 		lastQStart := qStart.AddDate(0, -3, 0)
 		return !t.Before(lastQStart) && t.Before(qStart)
+	case "last 6 months":
+		sixAgo := now.AddDate(0, -6, 0)
+		return !t.Before(sixAgo)
+	case "prior 6 months":
+		sixAgo := now.AddDate(0, -6, 0)
+		twelveAgo := now.AddDate(0, -12, 0)
+		return !t.Before(twelveAgo) && t.Before(sixAgo)
 	}
 	return false
 }
@@ -58,6 +68,10 @@ func dateInBucket(t time.Time, label string) bool {
 // query's updated_since filter. Returns 0 if no scoping should be applied.
 func dateScopeDays(scope string) int {
 	switch scope {
+	case "today":
+		return 1
+	case "yesterday":
+		return 2
 	case "this week":
 		return 7
 	case "last week":
@@ -70,6 +84,10 @@ func dateScopeDays(scope string) int {
 		return 90
 	case "last quarter":
 		return 180
+	case "last 6 months":
+		return 180
+	case "prior 6 months":
+		return 365
 	}
 	return 7 // default to a week
 }
@@ -88,7 +106,8 @@ func (m Model) filteredTasks(tasks []model.Task) []model.Task {
 				!strings.Contains(strings.ToLower(t.Assignee), q) &&
 				!strings.Contains(strings.ToLower(string(t.Type)), q) &&
 				!strings.Contains(strings.ToLower(t.ID), q) &&
-				!strings.Contains(strings.ToLower(t.Sprint), q) {
+				!strings.Contains(strings.ToLower(t.Sprint), q) &&
+				!labelsContain(t.Labels, q) {
 				continue
 			}
 		}
@@ -98,12 +117,39 @@ func (m Model) filteredTasks(tasks []model.Task) []model.Task {
 		if !m.cycleMatch("type", string(t.Type)) {
 			continue
 		}
-		if !m.cycleMatchDate(t.UpdatedAt) {
+		if !m.cycleMatchTag(t.Labels) {
+			continue
+		}
+		if !m.cycleMatchDate(t) {
 			continue
 		}
 		out = append(out, t)
 	}
 	return out
+}
+
+// labelsContain returns true if any label contains the query substring.
+func labelsContain(labels []string, q string) bool {
+	for _, l := range labels {
+		if strings.Contains(strings.ToLower(l), q) {
+			return true
+		}
+	}
+	return false
+}
+
+// cycleMatchTag returns true if any label matches the active tag cycle filter.
+func (m Model) cycleMatchTag(labels []string) bool {
+	if m.cycleField != "tag" || m.cycleIdx < 0 || m.cycleIdx >= len(m.cycleValues) {
+		return true
+	}
+	target := m.cycleValues[m.cycleIdx]
+	for _, l := range labels {
+		if l == target {
+			return true
+		}
+	}
+	return false
 }
 
 // cycleMatch returns true if item passes the active cycle filter for the given field.
@@ -114,12 +160,30 @@ func (m Model) cycleMatch(field, value string) bool {
 	return value == m.cycleValues[m.cycleIdx]
 }
 
-// cycleMatchDate returns true if t falls in the active date bucket when date cycling.
-func (m Model) cycleMatchDate(t time.Time) bool {
+// taskDateField returns the timestamp from t that corresponds to the active date field.
+func (m Model) taskDateField(t model.Task) time.Time {
+	switch m.dateField {
+	case "created":
+		return t.CreatedAt
+	case "start":
+		return t.StartDate
+	case "target":
+		return t.TargetDate
+	case "closed":
+		return t.ClosedAt
+	case "state changed":
+		return t.StateChangedAt
+	default: // "updated"
+		return t.UpdatedAt
+	}
+}
+
+// cycleMatchDate returns true if the task's active date field falls in the active date bucket.
+func (m Model) cycleMatchDate(t model.Task) bool {
 	if m.cycleField != "date" || m.cycleIdx < 0 || m.cycleIdx >= len(m.cycleValues) {
 		return true
 	}
-	return dateInBucket(t, m.cycleValues[m.cycleIdx])
+	return dateInBucket(m.taskDateField(t), m.cycleValues[m.cycleIdx])
 }
 
 // collectCycleValues gathers unique sorted values for a field from the
@@ -154,11 +218,18 @@ func (m Model) collectCycleValues(field string) []string {
 		seen[v] = struct{}{}
 		vals = append(vals, v)
 	}
+	// Seed with config preset tags so they always appear first.
+	if field == "tag" {
+		for _, t := range m.cfg.Tags {
+			add(t)
+		}
+	}
 	for _, t := range tasks {
 		if q != "" {
 			if !strings.Contains(strings.ToLower(t.Title), q) &&
 				!strings.Contains(strings.ToLower(t.Assignee), q) &&
-				!strings.Contains(strings.ToLower(string(t.Type)), q) {
+				!strings.Contains(strings.ToLower(string(t.Type)), q) &&
+				!labelsContain(t.Labels, q) {
 				continue
 			}
 		}
@@ -167,6 +238,10 @@ func (m Model) collectCycleValues(field string) []string {
 			add(t.Assignee)
 		case "type":
 			add(string(t.Type))
+		case "tag":
+			for _, l := range t.Labels {
+				add(l)
+			}
 		}
 	}
 	sort.Strings(vals)
@@ -203,6 +278,12 @@ func (m *Model) doCycleFilter(field string) {
 		m.cycleIdx = nextIdx
 	}
 	m.cursor = 0
+}
+
+// doCycleDateField advances the date field used by the f date-cycle filter.
+func (m *Model) doCycleDateField() {
+	m.dateFieldIdx = (m.dateFieldIdx + 1) % len(dateFields)
+	m.dateField = dateFields[m.dateFieldIdx]
 }
 
 // clearCycleFilter resets any active cycle filter.

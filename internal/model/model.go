@@ -39,8 +39,12 @@ type Task struct {
 	Backend     string // backend type for display
 	ParentID    string // parent work item ID (if any)
 	ParentTitle string // resolved parent title
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	StartDate      time.Time
+	TargetDate     time.Time
+	ClosedAt       time.Time
+	StateChangedAt time.Time
 }
 
 // Sprint represents an iteration/sprint across backends.

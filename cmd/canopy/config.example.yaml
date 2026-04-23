@@ -65,5 +65,13 @@ views:
     filters:
       assignee: me
 
+# Preset tags for the t cycle filter. These always appear first;
+# tags discovered from task data are appended automatically.
+tags:
+  # - blocked
+  # - tech-debt
+  # - needs-review
+  # - P1
+
 # How often (in seconds) the dashboard auto-refreshes in the background.
 refresh_secs: 300

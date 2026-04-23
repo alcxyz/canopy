@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -65,6 +66,7 @@ type Profile struct {
 type Config struct {
 	Profiles    []Profile `yaml:"profiles"`
 	Views       []View    `yaml:"views"`
+	Tags        []string  `yaml:"tags"`        // preset tags for the t cycle filter
 	RefreshSecs int       `yaml:"refresh_secs"`
 }
 
@@ -142,6 +144,16 @@ func Load() Config {
 	}
 
 	return cfg
+}
+
+// CacheKey returns a string derived from profile settings so the cache is
+// automatically invalidated when the user changes org/project/owner.
+func (c Config) CacheKey() string {
+	var parts []string
+	for _, p := range c.Profiles {
+		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s", p.Backend, p.Org, p.Project, p.Owner))
+	}
+	return strings.Join(parts, ";")
 }
 
 // ViewByName returns the view with the given name, or nil if not found.

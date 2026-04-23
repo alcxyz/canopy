@@ -15,6 +15,14 @@ import (
 	"github.com/alcxyz/canopy/internal/model"
 )
 
+// sem is a counting semaphore that limits concurrent Azure DevOps API calls
+// to 5. Azure DevOps has a per-user rate limit; capping concurrency prevents
+// exhausting the budget when multiple profiles or refreshes overlap.
+var sem = make(chan struct{}, 5)
+
+func acquire() { sem <- struct{}{} }
+func release() { <-sem }
+
 type azureBoards struct {
 	profile config.Profile
 	client  *http.Client
@@ -56,6 +64,9 @@ func getAzToken(ctx context.Context) (string, error) {
 }
 
 func (a *azureBoards) doRequest(ctx context.Context, method, url string, body io.Reader) ([]byte, error) {
+	acquire()
+	defer release()
+
 	token, err := getAzToken(ctx)
 	if err != nil {
 		return nil, err
@@ -285,8 +296,12 @@ func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
 		Profile:   a.profile.Name,
 		Backend:   string(config.BackendAzureBoards),
 		ParentID:  parentID,
-		CreatedAt: wi.Fields.CreatedDate,
-		UpdatedAt: wi.Fields.ChangedDate,
+		CreatedAt:      wi.Fields.CreatedDate,
+		UpdatedAt:      wi.Fields.ChangedDate,
+		StartDate:      wi.Fields.StartDate,
+		TargetDate:     wi.Fields.TargetDate,
+		ClosedAt:       wi.Fields.ClosedDate,
+		StateChangedAt: wi.Fields.StateChangeDate,
 	}
 }
 
@@ -383,15 +398,19 @@ type workItem struct {
 }
 
 type workItemFields struct {
-	Title         string        `json:"System.Title"`
-	State         string        `json:"System.State"`
-	WorkItemType  string        `json:"System.WorkItemType"`
-	AssignedTo    assignedTo    `json:"System.AssignedTo"`
-	Tags          string        `json:"System.Tags"`
-	IterationPath string        `json:"System.IterationPath"`
-	Parent        int           `json:"System.Parent"`
-	CreatedDate   time.Time     `json:"System.CreatedDate"`
-	ChangedDate   time.Time     `json:"System.ChangedDate"`
+	Title            string     `json:"System.Title"`
+	State            string     `json:"System.State"`
+	WorkItemType     string     `json:"System.WorkItemType"`
+	AssignedTo       assignedTo `json:"System.AssignedTo"`
+	Tags             string     `json:"System.Tags"`
+	IterationPath    string     `json:"System.IterationPath"`
+	Parent           int        `json:"System.Parent"`
+	CreatedDate      time.Time  `json:"System.CreatedDate"`
+	ChangedDate      time.Time  `json:"System.ChangedDate"`
+	StartDate        time.Time  `json:"Microsoft.VSTS.Scheduling.StartDate"`
+	TargetDate       time.Time  `json:"Microsoft.VSTS.Scheduling.TargetDate"`
+	ClosedDate       time.Time  `json:"Microsoft.VSTS.Common.ClosedDate"`
+	StateChangeDate  time.Time  `json:"Microsoft.VSTS.Common.StateChangeDate"`
 }
 
 type assignedTo struct {

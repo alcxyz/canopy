@@ -1,9 +1,11 @@
 package app
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/alcxyz/canopy/internal/backend"
+	"github.com/alcxyz/canopy/internal/cache"
 	"github.com/alcxyz/canopy/internal/config"
 	"github.com/alcxyz/canopy/internal/model"
 )
@@ -57,9 +59,25 @@ type Model struct {
 	// Overridden by the f cycle filter for client-side filtering.
 	dateScope string // "this week" by default
 
+	// Date field: which timestamp to use for the date cycle filter.
+	dateField    string   // current field label, e.g. "updated"
+	dateFieldIdx int      // index into dateFields
+
+	// Navigation stack for drilling into parent tasks.
+	navStack []model.Task
+
 	// Overlays
 	showHelp   bool
 	showSplash bool
+	showDetail bool
+	detailTask model.Task
+
+	// Cache
+	cache        *cache.Store
+	tasksLoadedAt time.Time // when the current data was fetched
+
+	// Version update check
+	latestVersion string // non-empty when a newer release is available
 
 	// Paths shown in splash
 	version  string
@@ -75,6 +93,11 @@ type Options struct {
 	LogPath  string
 	CfgPath  string
 	CacheDir string
+}
+
+// cachedTasks is the shape persisted in the cache files.
+type cachedTasks struct {
+	Tasks []model.Task `json:"tasks"`
 }
 
 // New creates a new Model from the loaded config.
@@ -106,5 +129,51 @@ func New(o Options) Model {
 	if len(initErrs) > 0 && len(backends) == 0 {
 		m.statusMsg = "Backend errors: " + initErrs[0]
 	}
+
+	// Initialise cache and load last-known data for instant startup.
+	if cs, err := cache.New(o.CacheDir, o.Cfg.CacheKey()); err == nil {
+		m.cache = cs
+		m.loadCachedTasks()
+	}
+
 	return m
+}
+
+// loadCachedTasks restores task lists from the on-disk cache.
+// No TTL is enforced here — stale data is shown immediately and replaced
+// by a background refresh.
+func (m *Model) loadCachedTasks() {
+	load := func(key string) []model.Task {
+		e, _ := m.cache.Get(key, 0)
+		if e == nil {
+			return nil
+		}
+		var ct cachedTasks
+		if err := json.Unmarshal(e.Data, &ct); err != nil {
+			return nil
+		}
+		return ct.Tasks
+	}
+	m.myTasks = load("my_tasks")
+	m.teamTasks = load("team_tasks")
+	m.doneTasks = load("done_tasks")
+	if len(m.myTasks)+len(m.teamTasks)+len(m.doneTasks) > 0 {
+		m.statusMsg = "showing cached data…"
+	}
+}
+
+// saveCachedTasks persists task lists to disk asynchronously.
+func (m Model) saveCachedTasks() {
+	if m.cache == nil {
+		return
+	}
+	cs := m.cache
+	my := m.myTasks
+	team := m.teamTasks
+	done := m.doneTasks
+	go func() {
+		_ = cs.Set("my_tasks", cachedTasks{Tasks: my})
+		_ = cs.Set("team_tasks", cachedTasks{Tasks: team})
+		_ = cs.Set("done_tasks", cachedTasks{Tasks: done})
+	}()
 }

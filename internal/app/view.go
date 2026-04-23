@@ -29,6 +29,14 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#585b70")).
 			Padding(1, 2)
+
+	// Indicator styles (grove pattern)
+	overdueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")) // red
+	dueSoonStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af")) // yellow
+	freshStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")) // green
+	recentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")) // blue
+	agingStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af")) // yellow
+	staleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")) // red
 )
 
 func (m Model) View() string {
@@ -42,6 +50,9 @@ func (m Model) View() string {
 	}
 	if m.showSplash {
 		return m.renderSplash()
+	}
+	if m.showDetail {
+		return m.renderDetail()
 	}
 
 	var b strings.Builder
@@ -64,6 +75,18 @@ func (m Model) View() string {
 	}
 
 	b.WriteString("\n")
+
+	// Breadcrumb (when navigated into a task)
+	if len(m.navStack) > 0 {
+		tabName := strings.SplitN(tabNames[m.activeTab], " [", 2)[0]
+		crumbs := []string{dimStyle.Render(tabName)}
+		for _, t := range m.navStack {
+			crumbs = append(crumbs, titleStyle.Render(truncate(t.Title, 40)))
+		}
+		b.WriteString("  " + strings.Join(crumbs, dimStyle.Render(" › ")))
+		b.WriteString("\n")
+	}
+
 	b.WriteString(strings.Repeat("─", m.width))
 	b.WriteString("\n")
 
@@ -75,12 +98,8 @@ func (m Model) View() string {
 
 	// Content
 	switch m.activeTab {
-	case tabMyTasks:
-		b.WriteString(m.renderTaskList(m.filteredTasks(m.myTasks)))
-	case tabTeam:
-		b.WriteString(m.renderTaskList(m.filteredTasks(m.teamTasks)))
-	case tabDone:
-		b.WriteString(m.renderTaskList(m.filteredTasks(m.doneTasks)))
+	case tabMyTasks, tabTeam, tabDone:
+		b.WriteString(m.renderTaskList(m.currentTasks()))
 	case tabViews:
 		b.WriteString(m.renderViews())
 	}
@@ -139,25 +158,35 @@ func (m Model) infoBarText() string {
 
 	// Tab-specific counts
 	switch m.activeTab {
-	case tabMyTasks:
-		n := len(m.filteredTasks(m.myTasks))
-		parts = append(parts, fmt.Sprintf("%d tasks", n))
-	case tabTeam:
-		n := len(m.filteredTasks(m.teamTasks))
-		parts = append(parts, fmt.Sprintf("%d tasks", n))
-	case tabDone:
-		n := len(m.filteredTasks(m.doneTasks))
-		parts = append(parts, fmt.Sprintf("%d tasks", n))
+	case tabMyTasks, tabTeam, tabDone:
+		n := len(m.currentTasks())
+		label := "tasks"
+		if len(m.navStack) > 0 {
+			label = "subtasks"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", n, label))
 	case tabViews:
 		parts = append(parts, fmt.Sprintf("%d views", len(m.cfg.Views)))
 	}
 
-	// Date scope
-	parts = append(parts, m.dateScope)
+	// Navigation hint
+	if len(m.navStack) > 0 {
+		parts = append(parts, "[/] sibling · esc back")
+	}
+
+	// Date scope and active field
+	dateLabel := m.dateScope
+	if m.dateField != "" && m.dateField != "updated" {
+		dateLabel += " (" + m.dateField + ")"
+	}
+	parts = append(parts, dateLabel)
 
 	// Hints
 	parts = append(parts, "? help")
 	parts = append(parts, "v"+m.version)
+	if m.latestVersion != "" {
+		parts = append(parts, "↑ "+m.latestVersion+" available")
+	}
 
 	return strings.Join(parts, " · ")
 }
@@ -189,18 +218,28 @@ func (m Model) renderHelp() string {
 
 Filters:
   /                        text search · esc clear
-  f                        cycle date (this week → last week → month → quarter)
+  f                        cycle date (today → yesterday → week → month → quarter → 6mo)
+  F                        cycle date field (updated → created → start → target → closed)
   d                        cycle by assignee
   s                        cycle by type (feature, bug, user-story…)
+  t                        cycle by tag / label
   esc                      clear all filters
 
 Actions:
+  enter                    navigate into task (show subtasks) · select view
+  esc / backspace          navigate back · clear filters
+  [ / ]                    prev / next sibling task
+  i                        task detail overlay
+  space                    copy task URL to clipboard
   o                        open task in browser
   r                        refresh data
-  enter                    select view (Views tab)
   !                        about / paths
   ?                        this help
-  q / ctrl+c               quit`
+  q / ctrl+c               quit
+
+Indicators:
+  ⏱  due        ! overdue · ● due this week · ○ has date · — no date
+  ↻  activity   ● green today · ● blue this week · ● yellow this month · ● red stale`
 
 	box := borderStyle.Width(min(72, m.width-4)).Render(
 		titleStyle.Render("canopy — help") + "\n\n" + help + "\n\n" +
@@ -236,6 +275,59 @@ func (m Model) renderSplash() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
+// ── Task detail overlay ─────────────────────────────────────────────────
+
+func (m Model) renderDetail() string {
+	t := m.detailTask
+	w := min(80, m.width-4)
+
+	row := func(label, value string) string {
+		if value == "" {
+			value = dimStyle.Render("—")
+		}
+		return fmt.Sprintf("  %-16s %s\n", dimStyle.Render(label), value)
+	}
+
+	ss := stateColors[t.State]
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("  "+t.Title) + "\n\n")
+	b.WriteString(row("ID", t.ID))
+	b.WriteString(row("State", ss.Render(string(t.State))))
+	b.WriteString(row("Type", string(t.Type)))
+	b.WriteString(row("Assignee", t.Assignee))
+	b.WriteString(row("Sprint", t.Sprint))
+	b.WriteString(row("Parent", t.ParentTitle))
+	if len(t.Labels) > 0 {
+		b.WriteString(row("Tags", strings.Join(t.Labels, ", ")))
+	} else {
+		b.WriteString(row("Tags", ""))
+	}
+	b.WriteString("\n")
+	b.WriteString(row("Created", fmtTime(t.CreatedAt)))
+	b.WriteString(row("Updated", fmtTime(t.UpdatedAt)))
+	b.WriteString(row("Start date", fmtTime(t.StartDate)))
+	b.WriteString(row("Target date", fmtTime(t.TargetDate)))
+	b.WriteString(row("Closed", fmtTime(t.ClosedAt)))
+	b.WriteString(row("State changed", fmtTime(t.StateChangedAt)))
+	if t.URL != "" {
+		b.WriteString("\n")
+		b.WriteString(row("URL", dimStyle.Render(t.URL)))
+	}
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  [/] prev/next · enter navigate in · o open · space copy URL · esc close"))
+
+	box := borderStyle.Width(w).Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+func fmtTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02 15:04") + dimStyle.Render(" ("+timeAgo(t)+")")
+}
+
 // ── Task list rendering ─────────────────────────────────────────────────
 
 func (m Model) renderTaskList(tasks []model.Task) string {
@@ -246,21 +338,37 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		if m.err != nil {
 			return dimStyle.Render(fmt.Sprintf("  Error: %v", m.err))
 		}
+		if len(m.navStack) > 0 {
+			return dimStyle.Render("  No subtasks.")
+		}
 		return dimStyle.Render("  No tasks found.")
 	}
 
 	var b strings.Builder
 
-	// Header — grove pattern: primary content first, metadata last (dimmed)
-	// TITLE(flex) PARENT(20) STATE(12) TYPE(12) ASSIGNEE(16) UPDATED(7) CREATED(7)
-	metaWidth := 20 + 12 + 12 + 16 + 7 + 7 // 74
-	titleWidth := m.width - metaWidth - 3   // 2 prefix + 1 space
-	if titleWidth < 16 {
-		titleWidth = 16
+	// Header — indicators, then flex columns (title+parent), then fixed metadata.
+	// Each column is separated by a single space for readability.
+	// DUE(2) ACT(2) TITLE(flex 60%) PARENT(flex 40%) STATE(12) TYPE(12) ASSIGNEE(18) UPDATED(7) CREATED(7)
+	const sep = " "
+	fixedWidth := 2 + 2 + 12 + 12 + 18 + 7 + 7 // 60 (column widths)
+	separators := 6                               // spaces between 7 columns (parent..created)
+	flexWidth := m.width - fixedWidth - separators - 2 // 2 for prefix
+	if flexWidth < 30 {
+		flexWidth = 30
 	}
+	titleWidth := flexWidth * 3 / 5   // 60%
+	parentWidth := flexWidth - titleWidth // 40%
 
-	b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s %-20s %-12s %-12s %-16s %-7s %-7s",
-		titleWidth, "TITLE", "PARENT", "STATE", "TYPE", "ASSIGNEE", "UPDATED", "CREATED")))
+	hdr := "  " +
+		cell("!", 2) + cell("~", 2) +
+		cell("TITLE", titleWidth) + sep +
+		cell("PARENT", parentWidth) + sep +
+		cell("STATE", 12) + sep +
+		cell("TYPE", 12) + sep +
+		cell("ASSIGNEE", 18) + sep +
+		cell("UPDATED", 7) + sep +
+		cell("CREATED", 7)
+	b.WriteString(dimStyle.Render(hdr))
 	b.WriteString("\n")
 
 	for i, t := range tasks {
@@ -269,16 +377,20 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 			prefix = "> "
 		}
 
+		due := cell(dueIndicator(t), 2)
+		act := cell(activityIndicator(t), 2)
 		title := cell(truncate(t.Title, titleWidth), titleWidth)
-		parent := dimStyle.Render(cell(truncate(t.ParentTitle, 20), 20))
+		parent := dimStyle.Render(cell(truncate(t.ParentTitle, parentWidth), parentWidth))
 		ss := stateColors[t.State]
 		state := ss.Render(cell(string(t.State), 12))
 		typ := typeStyle.Render(cell(string(t.Type), 12))
-		assignee := dimStyle.Render(cell(truncate(t.Assignee, 16), 16))
+		assignee := dimStyle.Render(cell(truncate(t.Assignee, 18), 18))
 		updated := dimStyle.Render(cell(timeAgo(t.UpdatedAt), 7))
 		created := dimStyle.Render(cell(timeAgo(t.CreatedAt), 7))
 
-		line := fmt.Sprintf("%s%s %s%s%s%s%s%s", prefix, title, parent, state, typ, assignee, updated, created)
+		line := prefix + due + act + title + sep +
+			parent + sep + state + sep + typ + sep +
+			assignee + sep + updated + sep + created
 		if i == m.cursor {
 			line = selRow(line)
 		}
@@ -312,6 +424,41 @@ func (m Model) renderViews() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// ── Indicator columns ──────────────────────────────────────────────────
+
+// dueIndicator shows target-date urgency: ! overdue, ● due this week, ○ has date.
+func dueIndicator(t model.Task) string {
+	if t.TargetDate.IsZero() {
+		return dimStyle.Render("—")
+	}
+	now := time.Now()
+	if t.TargetDate.Before(now) && t.State != model.StateDone && t.State != model.StateClosed {
+		return overdueStyle.Render("!")
+	}
+	if t.TargetDate.Before(now.AddDate(0, 0, 7)) {
+		return dueSoonStyle.Render("●")
+	}
+	return dimStyle.Render("○")
+}
+
+// activityIndicator shows freshness based on last update: ● green/blue/yellow/red.
+func activityIndicator(t model.Task) string {
+	if t.UpdatedAt.IsZero() {
+		return dimStyle.Render("—")
+	}
+	d := time.Since(t.UpdatedAt)
+	switch {
+	case d < 24*time.Hour:
+		return freshStyle.Render("●")
+	case d < 7*24*time.Hour:
+		return recentStyle.Render("●")
+	case d < 30*24*time.Hour:
+		return agingStyle.Render("●")
+	default:
+		return staleStyle.Render("●")
+	}
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
