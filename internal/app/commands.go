@@ -182,13 +182,26 @@ func (m Model) createTask() tea.Cmd {
 			if !ok {
 				continue
 			}
+			// Parse comma-separated tags, trimming whitespace and filtering empties.
+			var tags []string
+			for _, t := range strings.Split(m.formTags, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					tags = append(tags, t)
+				}
+			}
+
 			result, err := creator.CreateTask(ctx, backend.CreateTaskParams{
-				Type:        formTypes[m.formType],
-				Title:       m.formTitle,
-				Description: m.formDesc,
-				ParentID:    m.formParentID(),
-				Iteration:   m.formIteration,
-				Assignee:    m.formAssignee,
+				Type:               formTypes[m.formType],
+				Title:              m.formTitle,
+				Description:        m.formDesc,
+				ParentID:           m.formParentID(),
+				Iteration:          m.formIteration,
+				Assignee:           m.formAssignee,
+				Tags:               tags,
+				StartDate:          m.formStartDate,
+				TargetDate:         m.formTargetDate,
+				AcceptanceCriteria: m.formAcceptCriteria,
 			})
 			if err != nil {
 				return taskCreatedMsg{err: err}

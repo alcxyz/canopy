@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -23,6 +24,12 @@ const (
 	formFieldType = iota
 	formFieldTitle
 	formFieldDesc
+	formFieldTags
+	formFieldStartDate
+	formFieldTargetDate
+	formFieldAcceptCriteria
+	formFieldIteration
+	formFieldAssignee
 	formFieldCount // sentinel
 )
 
@@ -45,6 +52,18 @@ func (m Model) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(m.formTitle) == "" {
 			m.formErr = "title is required"
 			return m, nil
+		}
+		if m.formStartDate != "" {
+			if _, err := time.Parse("2006-01-02", m.formStartDate); err != nil {
+				m.formErr = "start date must be YYYY-MM-DD"
+				return m, nil
+			}
+		}
+		if m.formTargetDate != "" {
+			if _, err := time.Parse("2006-01-02", m.formTargetDate); err != nil {
+				m.formErr = "end date must be YYYY-MM-DD"
+				return m, nil
+			}
 		}
 		m.formErr = ""
 		m.formSubmitting = true
@@ -96,6 +115,90 @@ func (m Model) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.formDesc += string(r)
 			}
 		}
+
+	case formFieldTags:
+		switch key {
+		case "backspace":
+			if len(m.formTags) > 0 {
+				m.formTags = m.formTags[:len(m.formTags)-1]
+			}
+		case "enter":
+			m.formField = formFieldStartDate
+		default:
+			if r := msg.Runes; len(r) > 0 {
+				m.formTags += string(r)
+			}
+		}
+
+	case formFieldStartDate:
+		switch key {
+		case "backspace":
+			if len(m.formStartDate) > 0 {
+				m.formStartDate = m.formStartDate[:len(m.formStartDate)-1]
+			}
+		case "enter":
+			m.formField = formFieldTargetDate
+		default:
+			if r := msg.Runes; len(r) > 0 {
+				m.formStartDate += string(r)
+			}
+		}
+
+	case formFieldTargetDate:
+		switch key {
+		case "backspace":
+			if len(m.formTargetDate) > 0 {
+				m.formTargetDate = m.formTargetDate[:len(m.formTargetDate)-1]
+			}
+		case "enter":
+			m.formField = formFieldAcceptCriteria
+		default:
+			if r := msg.Runes; len(r) > 0 {
+				m.formTargetDate += string(r)
+			}
+		}
+
+	case formFieldAcceptCriteria:
+		switch key {
+		case "backspace":
+			if len(m.formAcceptCriteria) > 0 {
+				m.formAcceptCriteria = m.formAcceptCriteria[:len(m.formAcceptCriteria)-1]
+			}
+		case "enter":
+			m.formAcceptCriteria += "\n"
+		default:
+			if r := msg.Runes; len(r) > 0 {
+				m.formAcceptCriteria += string(r)
+			}
+		}
+
+	case formFieldIteration:
+		switch key {
+		case "backspace":
+			if len(m.formIteration) > 0 {
+				m.formIteration = m.formIteration[:len(m.formIteration)-1]
+			}
+		case "enter":
+			m.formField = formFieldAssignee
+		default:
+			if r := msg.Runes; len(r) > 0 {
+				m.formIteration += string(r)
+			}
+		}
+
+	case formFieldAssignee:
+		switch key {
+		case "backspace":
+			if len(m.formAssignee) > 0 {
+				m.formAssignee = m.formAssignee[:len(m.formAssignee)-1]
+			}
+		case "enter":
+			m.formField = formFieldCount - 1 // stay on last field
+		default:
+			if r := msg.Runes; len(r) > 0 {
+				m.formAssignee += string(r)
+			}
+		}
 	}
 
 	return m, nil
@@ -125,26 +228,35 @@ func (m Model) renderForm() string {
 	b.WriteString(m.formRow("Description", descDisplay, formFieldDesc))
 
 	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  -- Delivery plan --") + "\n")
 
-	// Read-only info
+	// Tags
+	b.WriteString(m.formRow("Tags", m.formTextInput(m.formTags, fieldW, formFieldTags), formFieldTags))
+
+	// Start Date
+	b.WriteString(m.formRow("Start Date", m.formDateInput(m.formStartDate, fieldW, formFieldStartDate), formFieldStartDate))
+
+	// End Date
+	b.WriteString(m.formRow("End Date", m.formDateInput(m.formTargetDate, fieldW, formFieldTargetDate), formFieldTargetDate))
+
+	// Acceptance Criteria
+	b.WriteString(m.formRow("Criteria", m.formTextInput(m.formAcceptCriteria, fieldW, formFieldAcceptCriteria), formFieldAcceptCriteria))
+
+	b.WriteString("\n")
+
+	// Sprint (editable)
+	b.WriteString(m.formRow("Sprint", m.formTextInput(m.formIteration, fieldW, formFieldIteration), formFieldIteration))
+
+	// Assignee (editable)
+	b.WriteString(m.formRow("Assignee", m.formTextInput(m.formAssignee, fieldW, formFieldAssignee), formFieldAssignee))
+
+	// Parent (read-only)
 	parentLabel := dimStyle.Render("none")
 	if pid := m.formParentID(); pid != "" {
 		pt := m.formParentTitle()
 		parentLabel = dimStyle.Render(fmt.Sprintf("#%s %s", pid, pt))
 	}
 	b.WriteString(m.infoRow("Parent", parentLabel))
-
-	iterLabel := dimStyle.Render("loading...")
-	if m.formIteration != "" {
-		iterLabel = dimStyle.Render(m.formIteration)
-	}
-	b.WriteString(m.infoRow("Sprint", iterLabel))
-
-	assigneeLabel := dimStyle.Render("unassigned")
-	if m.formAssignee != "" {
-		assigneeLabel = dimStyle.Render(m.formAssignee)
-	}
-	b.WriteString(m.infoRow("Assignee", assigneeLabel))
 
 	// Error
 	if m.formErr != "" {
@@ -193,6 +305,13 @@ func (m Model) formTextInput(text string, width, field int) string {
 		return dimStyle.Render("—")
 	}
 	return display
+}
+
+func (m Model) formDateInput(text string, width, field int) string {
+	if text == "" && m.formField != field {
+		return dimStyle.Render("YYYY-MM-DD")
+	}
+	return m.formTextInput(text, width, field)
 }
 
 // ── Form helpers ───────────────────────────────────────────────────────

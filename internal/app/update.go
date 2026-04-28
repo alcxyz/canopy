@@ -252,6 +252,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.formField = formFieldTitle
 			m.formTitle = ""
 			m.formDesc = ""
+			m.formTags = ""
+			m.formStartDate = ""
+			m.formTargetDate = ""
+			m.formAcceptCriteria = ""
 			m.formErr = ""
 			m.formSubmitting = false
 			m.formType = m.defaultFormTypeIndex()
