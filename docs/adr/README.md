@@ -5,3 +5,4 @@
 | [ADR-003](ADR-003-tui-navigation-and-filtering.md) | TUI navigation and filtering model | UX |
 | [ADR-004](ADR-004-task-drill-down-navigation.md) | Task drill-down navigation | UX |
 | [ADR-005](ADR-005-optional-task-creator-interface.md) | Optional TaskCreator interface for write operations | architecture |
+| [ADR-006](ADR-006-extended-create-fields.md) | Extend CreateTaskParams with delivery plan fields | architecture |
