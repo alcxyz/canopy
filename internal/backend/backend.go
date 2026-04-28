@@ -31,6 +31,12 @@ type CreateTaskParams struct {
 	ParentID    string // optional parent work item ID
 	Iteration   string // iteration/sprint path; empty = backend default
 	Assignee    string // display name or email; empty = unassigned
+
+	DescriptionHTML    string   // pre-formatted HTML; takes precedence over Description when set
+	Tags               []string // backend-agnostic labels; Azure joins with "; "
+	StartDate          string   // YYYY-MM-DD; empty = not set
+	TargetDate         string   // YYYY-MM-DD; empty = not set
+	AcceptanceCriteria string   // plain text; backends convert to native format
 }
 
 // CreateTaskResult holds the outcome of a successful creation.

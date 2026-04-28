@@ -388,17 +388,18 @@ func (a *azureBoards) CurrentIteration(ctx context.Context) (string, error) {
 	return a.currentIterationPath(ctx)
 }
 
-// CreateTask creates a new work item in Azure DevOps.
-func (a *azureBoards) CreateTask(ctx context.Context, params CreateTaskParams) (CreateTaskResult, error) {
-	azType, ok := typeToAzure[params.Type]
-	if !ok {
-		return CreateTaskResult{}, fmt.Errorf("unsupported work item type: %s", params.Type)
-	}
-
+// buildCreateOps constructs the JSON patch operations for creating a work item.
+// It is extracted for testability.
+func buildCreateOps(params CreateTaskParams, orgName string) []jsonPatchOp {
 	ops := []jsonPatchOp{
 		{Op: "add", Path: "/fields/System.Title", Value: params.Title},
 	}
-	if params.Description != "" {
+	if params.DescriptionHTML != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.Description",
+			Value: params.DescriptionHTML,
+		})
+	} else if params.Description != "" {
 		ops = append(ops, jsonPatchOp{
 			Op: "add", Path: "/fields/System.Description",
 			Value: plainTextToHTML(params.Description),
@@ -418,7 +419,7 @@ func (a *azureBoards) CreateTask(ctx context.Context, params CreateTaskParams) (
 	}
 	if params.ParentID != "" {
 		parentURL := fmt.Sprintf("https://dev.azure.com/%s/_apis/wit/workItems/%s",
-			a.profile.Org, params.ParentID)
+			orgName, params.ParentID)
 		ops = append(ops, jsonPatchOp{
 			Op:   "add",
 			Path: "/relations/-",
@@ -428,6 +429,41 @@ func (a *azureBoards) CreateTask(ctx context.Context, params CreateTaskParams) (
 			},
 		})
 	}
+	if len(params.Tags) > 0 {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.Tags",
+			Value: strings.Join(params.Tags, "; "),
+		})
+	}
+	if params.StartDate != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/Microsoft.VSTS.Scheduling.StartDate",
+			Value: params.StartDate,
+		})
+	}
+	if params.TargetDate != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/Microsoft.VSTS.Scheduling.TargetDate",
+			Value: params.TargetDate,
+		})
+	}
+	if params.AcceptanceCriteria != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
+			Value: plainTextToHTML(params.AcceptanceCriteria),
+		})
+	}
+	return ops
+}
+
+// CreateTask creates a new work item in Azure DevOps.
+func (a *azureBoards) CreateTask(ctx context.Context, params CreateTaskParams) (CreateTaskResult, error) {
+	azType, ok := typeToAzure[params.Type]
+	if !ok {
+		return CreateTaskResult{}, fmt.Errorf("unsupported work item type: %s", params.Type)
+	}
+
+	ops := buildCreateOps(params, a.profile.Org)
 
 	body, err := json.Marshal(ops)
 	if err != nil {
