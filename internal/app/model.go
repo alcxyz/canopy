@@ -19,7 +19,7 @@ const (
 	tabViews
 )
 
-var tabNames = []string{"My Tasks [1]", "Team [2]", "Done [3]", "Views [4]"}
+var tabNames = []string{"1 My Tasks", "2 Team", "3 Done", "4 Views"}
 
 // Model is the top-level bubbletea model.
 type Model struct {
