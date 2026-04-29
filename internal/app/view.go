@@ -24,7 +24,7 @@ var (
 		model.StateDone:       lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")),
 		model.StateClosed:     lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")),
 	}
-	typeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
+	typeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
 	borderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#585b70")).
@@ -268,10 +268,10 @@ func (m Model) renderSplash() string {
 	var info strings.Builder
 	info.WriteString(titleStyle.Render(art))
 	info.WriteString("\n\n")
-	info.WriteString(fmt.Sprintf("  %-14s %s\n", "version", m.version))
-	info.WriteString(fmt.Sprintf("  %-14s %s\n", "config", m.cfgPath))
-	info.WriteString(fmt.Sprintf("  %-14s %s\n", "cache", m.cacheDir))
-	info.WriteString(fmt.Sprintf("  %-14s %s\n", "log", m.logPath))
+	fmt.Fprintf(&info, "  %-14s %s\n", "version", m.version)
+	fmt.Fprintf(&info, "  %-14s %s\n", "config", m.cfgPath)
+	fmt.Fprintf(&info, "  %-14s %s\n", "cache", m.cacheDir)
+	fmt.Fprintf(&info, "  %-14s %s\n", "log", m.logPath)
 	info.WriteString("\n")
 	info.WriteString(dimStyle.Render("  press ! or esc to close"))
 
@@ -354,13 +354,13 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 	// Each column is separated by a single space for readability.
 	// DUE(2) ACT(2) TITLE(flex 60%) PARENT(flex 40%) STATE(12) TYPE(12) ASSIGNEE(18) UPDATED(7) CREATED(7)
 	const sep = " "
-	fixedWidth := 2 + 2 + 12 + 12 + 18 + 7 + 7 // 60 (column widths)
-	separators := 6                               // spaces between 7 columns (parent..created)
+	fixedWidth := 2 + 2 + 12 + 12 + 18 + 7 + 7         // 60 (column widths)
+	separators := 6                                    // spaces between 7 columns (parent..created)
 	flexWidth := m.width - fixedWidth - separators - 2 // 2 for prefix
 	if flexWidth < 30 {
 		flexWidth = 30
 	}
-	titleWidth := flexWidth * 3 / 5   // 60%
+	titleWidth := flexWidth * 3 / 5       // 60%
 	parentWidth := flexWidth - titleWidth // 40%
 
 	hdr := "  " +

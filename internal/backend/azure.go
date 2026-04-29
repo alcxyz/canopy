@@ -89,7 +89,7 @@ func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, bo
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -291,17 +291,17 @@ func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
 	}
 
 	return model.Task{
-		ID:        strconv.Itoa(wi.ID),
-		Title:     wi.Fields.Title,
-		State:     mapAzureState(wi.Fields.State),
-		Type:      mapAzureType(wi.Fields.WorkItemType),
-		Assignee:  assignee,
-		Labels:    labels,
-		Sprint:    wi.Fields.IterationPath,
-		URL:       webURL,
-		Profile:   a.profile.Name,
-		Backend:   string(config.BackendAzureBoards),
-		ParentID:  parentID,
+		ID:             strconv.Itoa(wi.ID),
+		Title:          wi.Fields.Title,
+		State:          mapAzureState(wi.Fields.State),
+		Type:           mapAzureType(wi.Fields.WorkItemType),
+		Assignee:       assignee,
+		Labels:         labels,
+		Sprint:         wi.Fields.IterationPath,
+		URL:            webURL,
+		Profile:        a.profile.Name,
+		Backend:        string(config.BackendAzureBoards),
+		ParentID:       parentID,
 		CreatedAt:      wi.Fields.CreatedDate,
 		UpdatedAt:      wi.Fields.ChangedDate,
 		StartDate:      wi.Fields.StartDate,
@@ -519,7 +519,7 @@ type workItemsResponse struct {
 }
 
 type workItem struct {
-	ID     int           `json:"id"`
+	ID     int            `json:"id"`
 	Fields workItemFields `json:"fields"`
 	Links  struct {
 		HTML struct {
@@ -529,19 +529,19 @@ type workItem struct {
 }
 
 type workItemFields struct {
-	Title            string     `json:"System.Title"`
-	State            string     `json:"System.State"`
-	WorkItemType     string     `json:"System.WorkItemType"`
-	AssignedTo       assignedTo `json:"System.AssignedTo"`
-	Tags             string     `json:"System.Tags"`
-	IterationPath    string     `json:"System.IterationPath"`
-	Parent           int        `json:"System.Parent"`
-	CreatedDate      time.Time  `json:"System.CreatedDate"`
-	ChangedDate      time.Time  `json:"System.ChangedDate"`
-	StartDate        time.Time  `json:"Microsoft.VSTS.Scheduling.StartDate"`
-	TargetDate       time.Time  `json:"Microsoft.VSTS.Scheduling.TargetDate"`
-	ClosedDate       time.Time  `json:"Microsoft.VSTS.Common.ClosedDate"`
-	StateChangeDate  time.Time  `json:"Microsoft.VSTS.Common.StateChangeDate"`
+	Title           string     `json:"System.Title"`
+	State           string     `json:"System.State"`
+	WorkItemType    string     `json:"System.WorkItemType"`
+	AssignedTo      assignedTo `json:"System.AssignedTo"`
+	Tags            string     `json:"System.Tags"`
+	IterationPath   string     `json:"System.IterationPath"`
+	Parent          int        `json:"System.Parent"`
+	CreatedDate     time.Time  `json:"System.CreatedDate"`
+	ChangedDate     time.Time  `json:"System.ChangedDate"`
+	StartDate       time.Time  `json:"Microsoft.VSTS.Scheduling.StartDate"`
+	TargetDate      time.Time  `json:"Microsoft.VSTS.Scheduling.TargetDate"`
+	ClosedDate      time.Time  `json:"Microsoft.VSTS.Common.ClosedDate"`
+	StateChangeDate time.Time  `json:"Microsoft.VSTS.Common.StateChangeDate"`
 }
 
 type assignedTo struct {

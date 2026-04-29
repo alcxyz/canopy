@@ -22,10 +22,10 @@ const (
 // Filter defines criteria for selecting tasks in a view.
 type Filter struct {
 	UpdatedSince string   `yaml:"updated_since"` // relative: "last_week", "last_month", etc.
-	Types        []string `yaml:"types"`          // feature, bug, user-story, task, etc.
-	Status       []string `yaml:"status"`         // done, in-progress, in-review, todo, etc.
-	Sprint       string   `yaml:"sprint"`         // "current", "previous", or sprint name
-	Assignee     string   `yaml:"assignee"`       // "me", or a team member name/email
+	Types        []string `yaml:"types"`         // feature, bug, user-story, task, etc.
+	Status       []string `yaml:"status"`        // done, in-progress, in-review, todo, etc.
+	Sprint       string   `yaml:"sprint"`        // "current", "previous", or sprint name
+	Assignee     string   `yaml:"assignee"`      // "me", or a team member name/email
 	Labels       []string `yaml:"labels"`
 }
 
@@ -66,7 +66,7 @@ type Profile struct {
 type Config struct {
 	Profiles    []Profile `yaml:"profiles"`
 	Views       []View    `yaml:"views"`
-	Tags        []string  `yaml:"tags"`        // preset tags for the t cycle filter
+	Tags        []string  `yaml:"tags"` // preset tags for the t cycle filter
 	RefreshSecs int       `yaml:"refresh_secs"`
 }
 

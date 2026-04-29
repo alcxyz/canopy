@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -240,7 +239,7 @@ func TestBuildCreateOps_ParentIDProducesRelationOp(t *testing.T) {
 	if rv.Rel != "System.LinkTypes.Hierarchy-Reverse" {
 		t.Errorf("unexpected rel type: %q", rv.Rel)
 	}
-	wantURL := fmt.Sprintf("https://dev.azure.com/myorg/_apis/wit/workItems/42")
+	wantURL := "https://dev.azure.com/myorg/_apis/wit/workItems/42"
 	if rv.URL != wantURL {
 		t.Errorf("expected URL %q, got %q", wantURL, rv.URL)
 	}
