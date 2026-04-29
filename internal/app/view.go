@@ -25,13 +25,13 @@ func (m Model) View() string {
 
 	// Overlays take over the full screen.
 	if m.showHelp {
-		return m.renderHelp()
+		return ui.RenderHelp(m.width, m.height)
 	}
 	if m.showSplash {
-		return m.renderSplash()
+		return ui.RenderSplash(m.version, m.cfgPath, m.cacheDir, m.logPath, m.width, m.height)
 	}
 	if m.showDetail {
-		return m.renderDetail()
+		return ui.RenderDetail(m.detailTask, stateColors, m.width, m.height)
 	}
 	if m.showForm {
 		return m.renderForm()
@@ -189,128 +189,6 @@ func (m Model) filterIndicator() string {
 	return "[" + strings.Join(parts, " ") + "]"
 }
 
-// ── Help overlay ────────────────────────────────────────────────────────
-
-func (m Model) renderHelp() string {
-	help := `Navigation:
-  j / k                    move down / up
-  gg / G                   first / last item
-  h / l                    previous / next tab
-  1–4                      switch to tab directly
-
-Filters:
-  /                        text search · esc clear
-  f                        cycle date (today → yesterday → week → month → quarter → 6mo)
-  F                        cycle date field (updated → created → start → target → closed)
-  d                        cycle by assignee
-  s                        cycle by type (feature, bug, user-story…)
-  t                        cycle by tag / label
-  esc                      clear all filters
-
-Actions:
-  c                        create work item
-  enter                    navigate into task (show subtasks) · select view
-  esc / backspace          navigate back · clear filters
-  [ / ]                    prev / next sibling task
-  i                        task detail overlay
-  space                    copy task URL to clipboard
-  o                        open task in browser
-  r                        refresh data
-  !                        about / paths
-  ?                        this help
-  q / ctrl+c               quit
-
-Indicators:
-  ⏱  due        ! overdue · ● due this week · ○ has date · — no date
-  ↻  activity   ● green today · ● blue this week · ● yellow this month · ● red stale`
-
-	box := ui.BorderStyle.Width(min(72, m.width-4)).Render(
-		ui.TitleStyle.Render("canopy — help") + "\n\n" + help + "\n\n" +
-			ui.DimStyle.Render("press ? or esc to close"),
-	)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-}
-
-// ── Splash overlay ──────────────────────────────────────────────────────
-
-func (m Model) renderSplash() string {
-	art := `
-     ╱╲
-    ╱  ╲
-   ╱ ╱╲ ╲
-  ╱ ╱  ╲ ╲
- ╱ ╱    ╲ ╲
-╱ ╱______╲ ╲
-╲__________╱
-  canopy`
-
-	var info strings.Builder
-	info.WriteString(ui.TitleStyle.Render(art))
-	info.WriteString("\n\n")
-	fmt.Fprintf(&info, "  %-14s %s\n", "version", m.version)
-	fmt.Fprintf(&info, "  %-14s %s\n", "config", m.cfgPath)
-	fmt.Fprintf(&info, "  %-14s %s\n", "cache", m.cacheDir)
-	fmt.Fprintf(&info, "  %-14s %s\n", "log", m.logPath)
-	info.WriteString("\n")
-	info.WriteString(ui.DimStyle.Render("  press ! or esc to close"))
-
-	box := ui.BorderStyle.Width(min(64, m.width-4)).Render(info.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-}
-
-// ── Task detail overlay ─────────────────────────────────────────────────
-
-func (m Model) renderDetail() string {
-	t := m.detailTask
-	w := min(80, m.width-4)
-
-	row := func(label, value string) string {
-		if value == "" {
-			value = ui.DimStyle.Render("—")
-		}
-		return fmt.Sprintf("  %-16s %s\n", ui.DimStyle.Render(label), value)
-	}
-
-	ss := stateColors[t.State]
-
-	var b strings.Builder
-	b.WriteString(ui.TitleStyle.Render("  "+t.Title) + "\n\n")
-	b.WriteString(row("ID", t.ID))
-	b.WriteString(row("State", ss.Render(string(t.State))))
-	b.WriteString(row("Type", string(t.Type)))
-	b.WriteString(row("Assignee", t.Assignee))
-	b.WriteString(row("Sprint", t.Sprint))
-	b.WriteString(row("Parent", t.ParentTitle))
-	if len(t.Labels) > 0 {
-		b.WriteString(row("Tags", strings.Join(t.Labels, ", ")))
-	} else {
-		b.WriteString(row("Tags", ""))
-	}
-	b.WriteString("\n")
-	b.WriteString(row("Created", fmtTime(t.CreatedAt)))
-	b.WriteString(row("Updated", fmtTime(t.UpdatedAt)))
-	b.WriteString(row("Start date", fmtTime(t.StartDate)))
-	b.WriteString(row("Target date", fmtTime(t.TargetDate)))
-	b.WriteString(row("Closed", fmtTime(t.ClosedAt)))
-	b.WriteString(row("State changed", fmtTime(t.StateChangedAt)))
-	if t.URL != "" {
-		b.WriteString("\n")
-		b.WriteString(row("URL", ui.DimStyle.Render(t.URL)))
-	}
-	b.WriteString("\n")
-	b.WriteString(ui.DimStyle.Render("  [/] prev/next · enter navigate in · o open · space copy URL · esc close"))
-
-	box := ui.BorderStyle.Width(w).Render(b.String())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-}
-
-func fmtTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.Format("2006-01-02 15:04") + ui.DimStyle.Render(" ("+timeAgo(t)+")")
-}
-
 // ── Task list rendering ─────────────────────────────────────────────────
 
 func (m Model) renderTaskList(tasks []model.Task) string {
@@ -368,8 +246,8 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		state := ss.Render(cell(string(t.State), 12))
 		typ := ui.TypeStyle.Render(cell(string(t.Type), 12))
 		assignee := ui.DimStyle.Render(cell(truncate(t.Assignee, 18), 18))
-		updated := ui.DimStyle.Render(cell(timeAgo(t.UpdatedAt), 7))
-		created := ui.DimStyle.Render(cell(timeAgo(t.CreatedAt), 7))
+		updated := ui.DimStyle.Render(cell(ui.TimeAgo(t.UpdatedAt), 7))
+		created := ui.DimStyle.Render(cell(ui.TimeAgo(t.CreatedAt), 7))
 
 		line := prefix + due + act + title + sep +
 			parent + sep + state + sep + typ + sep +
@@ -445,27 +323,6 @@ func activityIndicator(t model.Task) string {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
-
-func timeAgo(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	case d < 7*24*time.Hour:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dw", int(d.Hours()/(24*7)))
-	default:
-		return fmt.Sprintf("%dmo", int(d.Hours()/(24*30)))
-	}
-}
 
 func selRow(s string) string {
 	const bg = "\033[48;2;69;71;90m"
