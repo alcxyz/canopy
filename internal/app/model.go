@@ -33,7 +33,6 @@ type Model struct {
 
 	// UI state
 	activeTab     tab
-	activeView    int // selected view index on Views tab
 	cursor        int
 	width, height int
 	ready         bool
@@ -42,9 +41,9 @@ type Model struct {
 	statusMsg     string
 
 	// Vim-style gg navigation
-	prevKey    string
-	prevKeyAt  time.Time
-	ggTimeout  time.Duration
+	prevKey   string
+	prevKeyAt time.Time
+	ggTimeout time.Duration
 
 	// Text filter (/ key)
 	filtering   bool
@@ -60,8 +59,8 @@ type Model struct {
 	dateScope string // "this week" by default
 
 	// Date field: which timestamp to use for the date cycle filter.
-	dateField    string   // current field label, e.g. "updated"
-	dateFieldIdx int      // index into dateFields
+	dateField    string // current field label, e.g. "updated"
+	dateFieldIdx int    // index into dateFields
 
 	// Navigation stack for drilling into parent tasks.
 	navStack []model.Task
@@ -72,8 +71,23 @@ type Model struct {
 	showDetail bool
 	detailTask model.Task
 
+	// Create-form overlay
+	showForm           bool
+	formField          int // 0=type, 1=title, 2=description, ...
+	formType           int // index into formTypes
+	formTitle          string
+	formDesc           string
+	formTags           string
+	formStartDate      string
+	formTargetDate     string
+	formAcceptCriteria string
+	formIteration      string // resolved current iteration path
+	formAssignee       string // default assignee display name
+	formErr            string
+	formSubmitting     bool
+
 	// Cache
-	cache        *cache.Store
+	cache         *cache.Store
 	tasksLoadedAt time.Time // when the current data was fetched
 
 	// Version update check

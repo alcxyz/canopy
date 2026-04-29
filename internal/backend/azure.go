@@ -1,11 +1,13 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -63,7 +65,11 @@ func getAzToken(ctx context.Context) (string, error) {
 	return result.AccessToken, nil
 }
 
-func (a *azureBoards) doRequest(ctx context.Context, method, url string, body io.Reader) ([]byte, error) {
+func (a *azureBoards) doRequest(ctx context.Context, method, reqURL string, body io.Reader) ([]byte, error) {
+	return a.doRequestCT(ctx, method, reqURL, body, "application/json")
+}
+
+func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, body io.Reader, contentType string) ([]byte, error) {
 	acquire()
 	defer release()
 
@@ -72,18 +78,18 @@ func (a *azureBoards) doRequest(ctx context.Context, method, url string, body io
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -285,17 +291,17 @@ func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
 	}
 
 	return model.Task{
-		ID:        strconv.Itoa(wi.ID),
-		Title:     wi.Fields.Title,
-		State:     mapAzureState(wi.Fields.State),
-		Type:      mapAzureType(wi.Fields.WorkItemType),
-		Assignee:  assignee,
-		Labels:    labels,
-		Sprint:    wi.Fields.IterationPath,
-		URL:       webURL,
-		Profile:   a.profile.Name,
-		Backend:   string(config.BackendAzureBoards),
-		ParentID:  parentID,
+		ID:             strconv.Itoa(wi.ID),
+		Title:          wi.Fields.Title,
+		State:          mapAzureState(wi.Fields.State),
+		Type:           mapAzureType(wi.Fields.WorkItemType),
+		Assignee:       assignee,
+		Labels:         labels,
+		Sprint:         wi.Fields.IterationPath,
+		URL:            webURL,
+		Profile:        a.profile.Name,
+		Backend:        string(config.BackendAzureBoards),
+		ParentID:       parentID,
 		CreatedAt:      wi.Fields.CreatedDate,
 		UpdatedAt:      wi.Fields.ChangedDate,
 		StartDate:      wi.Fields.StartDate,
@@ -375,7 +381,132 @@ func (a *azureBoards) ListTeam(_ context.Context) ([]model.TeamMember, error) {
 	return members, nil
 }
 
+// ── CreateTask ──────────────────────────────────────────────────────────
+
+// CurrentIteration returns the current sprint iteration path.
+func (a *azureBoards) CurrentIteration(ctx context.Context) (string, error) {
+	return a.currentIterationPath(ctx)
+}
+
+// buildCreateOps constructs the JSON patch operations for creating a work item.
+// It is extracted for testability.
+func buildCreateOps(params CreateTaskParams, orgName string) []jsonPatchOp {
+	ops := []jsonPatchOp{
+		{Op: "add", Path: "/fields/System.Title", Value: params.Title},
+	}
+	if params.DescriptionHTML != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.Description",
+			Value: params.DescriptionHTML,
+		})
+	} else if params.Description != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.Description",
+			Value: plainTextToHTML(params.Description),
+		})
+	}
+	if params.Iteration != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.IterationPath",
+			Value: params.Iteration,
+		})
+	}
+	if params.Assignee != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.AssignedTo",
+			Value: params.Assignee,
+		})
+	}
+	if params.ParentID != "" {
+		parentURL := fmt.Sprintf("https://dev.azure.com/%s/_apis/wit/workItems/%s",
+			orgName, params.ParentID)
+		ops = append(ops, jsonPatchOp{
+			Op:   "add",
+			Path: "/relations/-",
+			Value: relationValue{
+				Rel: "System.LinkTypes.Hierarchy-Reverse",
+				URL: parentURL,
+			},
+		})
+	}
+	if len(params.Tags) > 0 {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/System.Tags",
+			Value: strings.Join(params.Tags, "; "),
+		})
+	}
+	if params.StartDate != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/Microsoft.VSTS.Scheduling.StartDate",
+			Value: params.StartDate,
+		})
+	}
+	if params.TargetDate != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/Microsoft.VSTS.Scheduling.TargetDate",
+			Value: params.TargetDate,
+		})
+	}
+	if params.AcceptanceCriteria != "" {
+		ops = append(ops, jsonPatchOp{
+			Op: "add", Path: "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
+			Value: plainTextToHTML(params.AcceptanceCriteria),
+		})
+	}
+	return ops
+}
+
+// CreateTask creates a new work item in Azure DevOps.
+func (a *azureBoards) CreateTask(ctx context.Context, params CreateTaskParams) (CreateTaskResult, error) {
+	azType, ok := typeToAzure[params.Type]
+	if !ok {
+		return CreateTaskResult{}, fmt.Errorf("unsupported work item type: %s", params.Type)
+	}
+
+	ops := buildCreateOps(params, a.profile.Org)
+
+	body, err := json.Marshal(ops)
+	if err != nil {
+		return CreateTaskResult{}, fmt.Errorf("marshalling patch document: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/_apis/wit/workitems/$%s?api-version=7.0",
+		a.baseURL, url.PathEscape(azType))
+
+	data, err := a.doRequestCT(ctx, "PATCH", reqURL, bytes.NewReader(body),
+		"application/json-patch+json")
+	if err != nil {
+		return CreateTaskResult{}, fmt.Errorf("creating work item: %w", err)
+	}
+
+	var wi workItem
+	if err := json.Unmarshal(data, &wi); err != nil {
+		return CreateTaskResult{}, fmt.Errorf("parsing created work item: %w", err)
+	}
+
+	return CreateTaskResult{Task: a.mapWorkItem(wi)}, nil
+}
+
 // ── Azure DevOps response types ─────────────────────────────────────────
+
+type jsonPatchOp struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value"`
+}
+
+type relationValue struct {
+	Rel string `json:"rel"`
+	URL string `json:"url"`
+}
+
+func plainTextToHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\n", "<br>\n")
+	return s
+}
 
 type wiqlResponse struct {
 	WorkItems []struct {
@@ -388,7 +519,7 @@ type workItemsResponse struct {
 }
 
 type workItem struct {
-	ID     int           `json:"id"`
+	ID     int            `json:"id"`
 	Fields workItemFields `json:"fields"`
 	Links  struct {
 		HTML struct {
@@ -398,19 +529,19 @@ type workItem struct {
 }
 
 type workItemFields struct {
-	Title            string     `json:"System.Title"`
-	State            string     `json:"System.State"`
-	WorkItemType     string     `json:"System.WorkItemType"`
-	AssignedTo       assignedTo `json:"System.AssignedTo"`
-	Tags             string     `json:"System.Tags"`
-	IterationPath    string     `json:"System.IterationPath"`
-	Parent           int        `json:"System.Parent"`
-	CreatedDate      time.Time  `json:"System.CreatedDate"`
-	ChangedDate      time.Time  `json:"System.ChangedDate"`
-	StartDate        time.Time  `json:"Microsoft.VSTS.Scheduling.StartDate"`
-	TargetDate       time.Time  `json:"Microsoft.VSTS.Scheduling.TargetDate"`
-	ClosedDate       time.Time  `json:"Microsoft.VSTS.Common.ClosedDate"`
-	StateChangeDate  time.Time  `json:"Microsoft.VSTS.Common.StateChangeDate"`
+	Title           string     `json:"System.Title"`
+	State           string     `json:"System.State"`
+	WorkItemType    string     `json:"System.WorkItemType"`
+	AssignedTo      assignedTo `json:"System.AssignedTo"`
+	Tags            string     `json:"System.Tags"`
+	IterationPath   string     `json:"System.IterationPath"`
+	Parent          int        `json:"System.Parent"`
+	CreatedDate     time.Time  `json:"System.CreatedDate"`
+	ChangedDate     time.Time  `json:"System.ChangedDate"`
+	StartDate       time.Time  `json:"Microsoft.VSTS.Scheduling.StartDate"`
+	TargetDate      time.Time  `json:"Microsoft.VSTS.Scheduling.TargetDate"`
+	ClosedDate      time.Time  `json:"Microsoft.VSTS.Common.ClosedDate"`
+	StateChangeDate time.Time  `json:"Microsoft.VSTS.Common.StateChangeDate"`
 }
 
 type assignedTo struct {

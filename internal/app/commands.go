@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/alcxyz/canopy/internal/backend"
 	"github.com/alcxyz/canopy/internal/config"
 	"github.com/alcxyz/canopy/internal/model"
 )
@@ -21,6 +22,16 @@ type tasksLoadedMsg struct {
 	teamTasks []model.Task
 	doneTasks []model.Task
 	err       error
+}
+
+type taskCreatedMsg struct {
+	task model.Task
+	err  error
+}
+
+type iterationResolvedMsg struct {
+	path string
+	err  error
 }
 
 type tickMsg time.Time
@@ -143,7 +154,7 @@ func checkLatestVersion(version string) tea.Cmd {
 		if err != nil {
 			return versionCheckMsg{}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			return versionCheckMsg{}
 		}
@@ -157,5 +168,66 @@ func checkLatestVersion(version string) tea.Cmd {
 			return versionCheckMsg{}
 		}
 		return versionCheckMsg{latest: payload.TagName}
+	}
+}
+
+// createTask sends a create request to the first backend that supports TaskCreator.
+func (m Model) createTask() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		for _, b := range m.backends {
+			creator, ok := b.(backend.TaskCreator)
+			if !ok {
+				continue
+			}
+			// Parse comma-separated tags, trimming whitespace and filtering empties.
+			var tags []string
+			for _, t := range strings.Split(m.formTags, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					tags = append(tags, t)
+				}
+			}
+
+			result, err := creator.CreateTask(ctx, backend.CreateTaskParams{
+				Type:               formTypes[m.formType],
+				Title:              m.formTitle,
+				Description:        m.formDesc,
+				ParentID:           m.formParentID(),
+				Iteration:          m.formIteration,
+				Assignee:           m.formAssignee,
+				Tags:               tags,
+				StartDate:          m.formStartDate,
+				TargetDate:         m.formTargetDate,
+				AcceptanceCriteria: m.formAcceptCriteria,
+			})
+			if err != nil {
+				return taskCreatedMsg{err: err}
+			}
+			return taskCreatedMsg{task: result.Task}
+		}
+
+		return taskCreatedMsg{err: fmt.Errorf("no backend supports creating work items")}
+	}
+}
+
+// resolveIteration fetches the current iteration path for the form.
+func (m Model) resolveIteration() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		for _, b := range m.backends {
+			creator, ok := b.(backend.TaskCreator)
+			if !ok {
+				continue
+			}
+			path, err := creator.CurrentIteration(ctx)
+			return iterationResolvedMsg{path: path, err: err}
+		}
+
+		return iterationResolvedMsg{err: fmt.Errorf("no backend supports iterations")}
 	}
 }

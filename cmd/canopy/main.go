@@ -35,7 +35,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cannot open log: %v\n", err)
 		os.Exit(1)
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	p := tea.NewProgram(
 		app.New(app.Options{

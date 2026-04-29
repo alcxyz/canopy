@@ -115,6 +115,7 @@ Views support these filter fields:
 | `j` / `k` | Move down / up |
 | `g` / `G` | First / last item |
 | `1` `2` `3` | Switch to tab directly |
+| `c` | Create work item |
 | `r` | Refresh tasks |
 | `enter` | Select view (Views tab) |
 | `o` | Open task in browser |

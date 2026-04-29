@@ -27,18 +27,18 @@ const (
 
 // Task is the unified work item across all backends.
 type Task struct {
-	ID          string
-	Title       string
-	State       TaskState
-	Type        TaskType
-	Assignee    string
-	Labels      []string
-	Sprint      string
-	URL         string // web URL to open in browser
-	Profile     string // which profile this came from
-	Backend     string // backend type for display
-	ParentID    string // parent work item ID (if any)
-	ParentTitle string // resolved parent title
+	ID             string
+	Title          string
+	State          TaskState
+	Type           TaskType
+	Assignee       string
+	Labels         []string
+	Sprint         string
+	URL            string // web URL to open in browser
+	Profile        string // which profile this came from
+	Backend        string // backend type for display
+	ParentID       string // parent work item ID (if any)
+	ParentTitle    string // resolved parent title
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	StartDate      time.Time
