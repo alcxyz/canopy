@@ -17,10 +17,23 @@ A terminal UI for tech leads to track tasks across Azure Boards, Jira, GitHub Is
 - **Multi-backend**: connect to Azure Boards, Jira, GitHub Issues, or Linear from a single dashboard
 - **Multi-profile**: define profiles per project/org and switch between them
 - **Views**: config-driven filter presets for meetings — weekly standup, sprint review, or custom views
-- **My Tasks / Team**: see your own work and your team's work at a glance
-- **Caching**: responses cached to disk for instant startup
+- **My Tasks / Team / Done**: see your own work, your team's work, and completed items
+- **Task drill-down**: navigate into tasks to see subtasks, with breadcrumb trail and sibling navigation
+- **Detail overlay**: inline task detail view with dates, tags, state, and URL
+- **Create work items**: inline form for creating tasks, features, bugs, and user stories with full field support
+- **Cycle filters**: quickly narrow by date, assignee, type, or tag
+- **Caching**: responses cached to disk for instant startup; tab state persisted across sessions
+- **Update notifications**: footer shows when a newer release is available
+- Catppuccin Mocha colour palette
 
 ## Installation
+
+### Homebrew
+
+```sh
+brew tap alcxyz/tap
+brew install canopy
+```
 
 ### Build from source
 
@@ -109,16 +122,41 @@ Views support these filter fields:
 
 ## Key bindings
 
+### Navigation
+
 | Key | Action |
 |-----|--------|
-| `h` / `l` | Previous / next tab |
 | `j` / `k` | Move down / up |
-| `g` / `G` | First / last item |
-| `1` `2` `3` | Switch to tab directly |
+| `h` / `l` | Previous / next tab |
+| `gg` / `G` | First / last item |
+| `1`–`4` | Switch to tab directly |
+| `enter` | Navigate into task (show subtasks) / select view |
+| `backspace` / `esc` | Navigate back / clear filters |
+| `[` / `]` | Previous / next sibling task (when navigated in) |
+
+### Filters
+
+| Key | Action |
+|-----|--------|
+| `/` | Open text filter (type to search, enter to confirm, esc to clear) |
+| `f` | Cycle by date (today → yesterday → week → month → quarter → 6mo) |
+| `F` | Cycle date field (updated → created → start → target → closed) |
+| `d` | Cycle by assignee |
+| `s` | Cycle by type (feature, bug, user-story, task, epic) |
+| `t` | Cycle by tag / label |
+| `esc` | Clear all filters |
+
+### Actions
+
+| Key | Action |
+|-----|--------|
 | `c` | Create work item |
-| `r` | Refresh tasks |
-| `enter` | Select view (Views tab) |
+| `i` | Task detail overlay |
 | `o` | Open task in browser |
+| `space` | Copy task URL to clipboard |
+| `r` | Refresh tasks |
+| `!` | About: version, config path, cache and log locations |
+| `?` | Help overlay |
 | `q` / `ctrl+c` | Quit |
 
 ## Status
