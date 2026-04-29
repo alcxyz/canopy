@@ -10,6 +10,7 @@ import (
 
 	"github.com/alcxyz/canopy/internal/backend"
 	"github.com/alcxyz/canopy/internal/model"
+	"github.com/alcxyz/canopy/internal/ui"
 )
 
 // formTypes lists the work item types available for creation.
@@ -211,7 +212,7 @@ func (m Model) renderForm() string {
 	fieldW := w - 20 // label takes ~18 chars + padding
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("  Create work item") + "\n\n")
+	b.WriteString(ui.TitleStyle.Render("  Create work item") + "\n\n")
 
 	// Type selector
 	typeLabel := string(formTypes[m.formType])
@@ -228,7 +229,7 @@ func (m Model) renderForm() string {
 	b.WriteString(m.formRow("Description", descDisplay, formFieldDesc))
 
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  -- Delivery plan --") + "\n")
+	b.WriteString(ui.DimStyle.Render("  -- Delivery plan --") + "\n")
 
 	// Tags
 	b.WriteString(m.formRow("Tags", m.formTextInput(m.formTags, fieldW, formFieldTags), formFieldTags))
@@ -251,41 +252,41 @@ func (m Model) renderForm() string {
 	b.WriteString(m.formRow("Assignee", m.formTextInput(m.formAssignee, fieldW, formFieldAssignee), formFieldAssignee))
 
 	// Parent (read-only)
-	parentLabel := dimStyle.Render("none")
+	parentLabel := ui.DimStyle.Render("none")
 	if pid := m.formParentID(); pid != "" {
 		pt := m.formParentTitle()
-		parentLabel = dimStyle.Render(fmt.Sprintf("#%s %s", pid, pt))
+		parentLabel = ui.DimStyle.Render(fmt.Sprintf("#%s %s", pid, pt))
 	}
 	b.WriteString(m.infoRow("Parent", parentLabel))
 
 	// Error
 	if m.formErr != "" {
 		b.WriteString("\n")
-		b.WriteString(overdueStyle.Render("  " + m.formErr))
+		b.WriteString(ui.OverdueStyle.Render("  " + m.formErr))
 	}
 
 	if m.formSubmitting {
 		b.WriteString("\n")
-		b.WriteString(statusStyle.Render("  submitting..."))
+		b.WriteString(ui.StatusStyle.Render("  submitting..."))
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(dimStyle.Render("  ctrl+s submit  esc cancel  tab next field"))
+	b.WriteString(ui.DimStyle.Render("  ctrl+s submit  esc cancel  tab next field"))
 
-	box := borderStyle.Width(w).Render(b.String())
+	box := ui.BorderStyle.Width(w).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m Model) formRow(label, value string, field int) string {
-	l := dimStyle.Render(fmt.Sprintf("  %-14s ", label))
+	l := ui.DimStyle.Render(fmt.Sprintf("  %-14s ", label))
 	if m.formField == field {
-		l = filterStyle.Render(fmt.Sprintf("  %-14s ", label))
+		l = ui.FilterStyle.Render(fmt.Sprintf("  %-14s ", label))
 	}
 	return l + value + "\n"
 }
 
 func (m Model) infoRow(label, value string) string {
-	return dimStyle.Render(fmt.Sprintf("  %-14s ", label)) + value + "\n"
+	return ui.DimStyle.Render(fmt.Sprintf("  %-14s ", label)) + value + "\n"
 }
 
 func (m Model) formTextInput(text string, width, field int) string {
@@ -299,17 +300,17 @@ func (m Model) formTextInput(text string, width, field int) string {
 	}
 
 	if m.formField == field {
-		return display + filterStyle.Render("█")
+		return display + ui.FilterStyle.Render("█")
 	}
 	if display == "" {
-		return dimStyle.Render("—")
+		return ui.DimStyle.Render("—")
 	}
 	return display
 }
 
 func (m Model) formDateInput(text string, width, field int) string {
 	if text == "" && m.formField != field {
-		return dimStyle.Render("YYYY-MM-DD")
+		return ui.DimStyle.Render("YYYY-MM-DD")
 	}
 	return m.formTextInput(text, width, field)
 }
