@@ -21,11 +21,13 @@ var (
 	ActiveTabStyle = lipgloss.NewStyle().
 			Padding(0, 2).
 			Bold(true).
-			Foreground(lipgloss.Color(catMauve))
+			Foreground(lipgloss.Color(catMauve)).
+			Underline(true)
 
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(catMauve))
+			Foreground(lipgloss.Color(catMauve)).
+			PaddingLeft(1)
 
 	DimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(catOverlay0))
 

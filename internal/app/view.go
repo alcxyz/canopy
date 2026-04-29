@@ -39,18 +39,14 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Tab bar
-	var tabs []string
-	for i, name := range tabNames {
-		if tab(i) == m.activeTab {
-			tabs = append(tabs, ui.ActiveTabStyle.Render(name))
-		} else {
-			tabs = append(tabs, ui.TabStyle.Render(name))
-		}
-	}
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, tabs...))
+	// Title
+	b.WriteString(ui.TitleStyle.Render("canopy"))
+	b.WriteString("\n\n")
 
-	// Active filter indicator next to tabs
+	// Tab bar
+	b.WriteString(ui.RenderTabs(tabNames, int(m.activeTab), m.width))
+
+	// Active filter indicator on same line after tabs
 	if indicator := m.filterIndicator(); indicator != "" {
 		b.WriteString("  ")
 		b.WriteString(ui.FilterStyle.Render(indicator))
@@ -60,7 +56,7 @@ func (m Model) View() string {
 
 	// Breadcrumb (when navigated into a task)
 	if len(m.navStack) > 0 {
-		tabName := strings.SplitN(tabNames[m.activeTab], " [", 2)[0]
+		tabName := tabNames[m.activeTab][2:] // strip "N " prefix
 		crumbs := []string{ui.DimStyle.Render(tabName)}
 		for _, t := range m.navStack {
 			crumbs = append(crumbs, ui.TitleStyle.Render(truncate(t.Title, 40)))
@@ -69,7 +65,6 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(strings.Repeat("─", m.width))
 	b.WriteString("\n")
 
 	// Text filter input
