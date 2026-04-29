@@ -50,6 +50,33 @@ func (s *Store) Get(key string, ttl time.Duration) (*Entry, error) {
 	return &e, nil
 }
 
+// UIState holds persisted UI preferences.
+type UIState struct {
+	ActiveTab int `json:"active_tab"`
+}
+
+// uiStateKey is the cache key used for UIState entries.
+const uiStateKey = "state"
+
+// LoadUIState reads the persisted UI state. Returns a zero-value UIState if
+// none exists yet.
+func (s *Store) LoadUIState() UIState {
+	e, _ := s.Get(uiStateKey, 0)
+	if e == nil {
+		return UIState{}
+	}
+	var st UIState
+	if err := json.Unmarshal(e.Data, &st); err != nil {
+		return UIState{}
+	}
+	return st
+}
+
+// SaveUIState persists the UI state to disk.
+func (s *Store) SaveUIState(st UIState) error {
+	return s.Set(uiStateKey, st)
+}
+
 // Set writes data to the cache, stamped with the current time and config key.
 func (s *Store) Set(key string, data any) error {
 	raw, err := json.Marshal(data)

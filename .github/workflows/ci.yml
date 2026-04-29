@@ -51,3 +51,77 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+  release:
+    name: Release
+    needs: check
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: GoReleaser snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: Validate release archives
+        run: |
+          set -euo pipefail
+          for tarball in dist/*.tar.gz; do
+            echo "==> Checking $tarball"
+
+            contents=$(tar tzf "$tarball")
+
+            # No '.' directory entry (breaks Homebrew extraction)
+            if echo "$contents" | grep -qx '\./$\|^\.'; then
+              echo "FAIL: $tarball contains a '.' directory entry"
+              echo "$contents" | head -20
+              exit 1
+            fi
+
+            # Expected files present
+            for f in canopy README.md LICENSE config.example.yaml; do
+              if ! echo "$contents" | grep -q "$f"; then
+                echo "FAIL: $tarball missing $f"
+                echo "$contents"
+                exit 1
+              fi
+            done
+
+            echo "  OK"
+          done
+
+      - name: Auto-tag release
+        id: tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          VERSION="v$(cat VERSION)"
+          if git tag -l "$VERSION" | grep -q . || git ls-remote --tags origin "$VERSION" | grep -q .; then
+            echo "Tag $VERSION already exists, skipping."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Creating tag $VERSION"
+            git tag "$VERSION"
+            git push origin "$VERSION"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run GoReleaser
+        if: steps.tag.outputs.created == 'true'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

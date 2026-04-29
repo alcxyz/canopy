@@ -6,38 +6,17 @@ import (
 	"time"
 
 	"github.com/alcxyz/canopy/internal/model"
+	"github.com/alcxyz/canopy/internal/ui"
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	tabStyle       = lipgloss.NewStyle().Padding(0, 2)
-	activeTabStyle = lipgloss.NewStyle().Padding(0, 2).Bold(true).Foreground(lipgloss.Color("#cba6f7"))
-	titleStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#cba6f7"))
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086"))
-	filterStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af"))
-	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#9399b2"))
-	countStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa"))
-	stateColors    = map[model.TaskState]lipgloss.Style{
-		model.StateTodo:       lipgloss.NewStyle().Foreground(lipgloss.Color("#585b70")),
-		model.StateInProgress: lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")),
-		model.StateInReview:   lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af")),
-		model.StateDone:       lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")),
-		model.StateClosed:     lipgloss.NewStyle().Foreground(lipgloss.Color("#6c7086")),
-	}
-	typeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
-	borderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#585b70")).
-			Padding(1, 2)
-
-	// Indicator styles (grove pattern)
-	overdueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")) // red
-	dueSoonStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af")) // yellow
-	freshStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")) // green
-	recentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")) // blue
-	agingStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af")) // yellow
-	staleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")) // red
-)
+var stateColors = map[model.TaskState]lipgloss.Style{
+	model.StateTodo:       ui.StateTodoColor,
+	model.StateInProgress: ui.StateInProgressColor,
+	model.StateInReview:   ui.StateInReviewColor,
+	model.StateDone:       ui.StateDoneColor,
+	model.StateClosed:     ui.StateClosedColor,
+}
 
 func (m Model) View() string {
 	if !m.ready {
@@ -64,9 +43,9 @@ func (m Model) View() string {
 	var tabs []string
 	for i, name := range tabNames {
 		if tab(i) == m.activeTab {
-			tabs = append(tabs, activeTabStyle.Render(name))
+			tabs = append(tabs, ui.ActiveTabStyle.Render(name))
 		} else {
-			tabs = append(tabs, tabStyle.Render(name))
+			tabs = append(tabs, ui.TabStyle.Render(name))
 		}
 	}
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, tabs...))
@@ -74,7 +53,7 @@ func (m Model) View() string {
 	// Active filter indicator next to tabs
 	if indicator := m.filterIndicator(); indicator != "" {
 		b.WriteString("  ")
-		b.WriteString(filterStyle.Render(indicator))
+		b.WriteString(ui.FilterStyle.Render(indicator))
 	}
 
 	b.WriteString("\n")
@@ -82,11 +61,11 @@ func (m Model) View() string {
 	// Breadcrumb (when navigated into a task)
 	if len(m.navStack) > 0 {
 		tabName := strings.SplitN(tabNames[m.activeTab], " [", 2)[0]
-		crumbs := []string{dimStyle.Render(tabName)}
+		crumbs := []string{ui.DimStyle.Render(tabName)}
 		for _, t := range m.navStack {
-			crumbs = append(crumbs, titleStyle.Render(truncate(t.Title, 40)))
+			crumbs = append(crumbs, ui.TitleStyle.Render(truncate(t.Title, 40)))
 		}
-		b.WriteString("  " + strings.Join(crumbs, dimStyle.Render(" › ")))
+		b.WriteString("  " + strings.Join(crumbs, ui.DimStyle.Render(" › ")))
 		b.WriteString("\n")
 	}
 
@@ -95,7 +74,7 @@ func (m Model) View() string {
 
 	// Text filter input
 	if m.filtering {
-		b.WriteString(filterStyle.Render("  / " + m.filterQuery + "█"))
+		b.WriteString(ui.FilterStyle.Render("  / " + m.filterQuery + "█"))
 		b.WriteString("\n")
 	}
 
@@ -126,19 +105,19 @@ func (m Model) renderStatusBar() string {
 	if msg == "" {
 		msg = m.defaultStatusMsg()
 	}
-	return statusStyle.Render(msg)
+	return ui.StatusStyle.Render(msg)
 }
 
 func (m Model) defaultStatusMsg() string {
 	var parts []string
 	if n := len(m.myTasks); n > 0 {
-		parts = append(parts, countStyle.Render(fmt.Sprintf("%d", n))+" my")
+		parts = append(parts, ui.CountStyle.Render(fmt.Sprintf("%d", n))+" my")
 	}
 	if n := len(m.teamTasks); n > 0 {
-		parts = append(parts, countStyle.Render(fmt.Sprintf("%d", n))+" team")
+		parts = append(parts, ui.CountStyle.Render(fmt.Sprintf("%d", n))+" team")
 	}
 	if n := len(m.doneTasks); n > 0 {
-		parts = append(parts, countStyle.Render(fmt.Sprintf("%d", n))+" done")
+		parts = append(parts, ui.CountStyle.Render(fmt.Sprintf("%d", n))+" done")
 	}
 	if len(parts) == 0 {
 		return ""
@@ -149,7 +128,7 @@ func (m Model) defaultStatusMsg() string {
 // ── Info bar ────────────────────────────────────────────────────────────
 
 func (m Model) renderInfoBar() string {
-	return dimStyle.Render(m.infoBarText())
+	return ui.DimStyle.Render(m.infoBarText())
 }
 
 func (m Model) infoBarText() string {
@@ -245,9 +224,9 @@ Indicators:
   ⏱  due        ! overdue · ● due this week · ○ has date · — no date
   ↻  activity   ● green today · ● blue this week · ● yellow this month · ● red stale`
 
-	box := borderStyle.Width(min(72, m.width-4)).Render(
-		titleStyle.Render("canopy — help") + "\n\n" + help + "\n\n" +
-			dimStyle.Render("press ? or esc to close"),
+	box := ui.BorderStyle.Width(min(72, m.width-4)).Render(
+		ui.TitleStyle.Render("canopy — help") + "\n\n" + help + "\n\n" +
+			ui.DimStyle.Render("press ? or esc to close"),
 	)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
@@ -266,16 +245,16 @@ func (m Model) renderSplash() string {
   canopy`
 
 	var info strings.Builder
-	info.WriteString(titleStyle.Render(art))
+	info.WriteString(ui.TitleStyle.Render(art))
 	info.WriteString("\n\n")
 	fmt.Fprintf(&info, "  %-14s %s\n", "version", m.version)
 	fmt.Fprintf(&info, "  %-14s %s\n", "config", m.cfgPath)
 	fmt.Fprintf(&info, "  %-14s %s\n", "cache", m.cacheDir)
 	fmt.Fprintf(&info, "  %-14s %s\n", "log", m.logPath)
 	info.WriteString("\n")
-	info.WriteString(dimStyle.Render("  press ! or esc to close"))
+	info.WriteString(ui.DimStyle.Render("  press ! or esc to close"))
 
-	box := borderStyle.Width(min(64, m.width-4)).Render(info.String())
+	box := ui.BorderStyle.Width(min(64, m.width-4)).Render(info.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
@@ -287,15 +266,15 @@ func (m Model) renderDetail() string {
 
 	row := func(label, value string) string {
 		if value == "" {
-			value = dimStyle.Render("—")
+			value = ui.DimStyle.Render("—")
 		}
-		return fmt.Sprintf("  %-16s %s\n", dimStyle.Render(label), value)
+		return fmt.Sprintf("  %-16s %s\n", ui.DimStyle.Render(label), value)
 	}
 
 	ss := stateColors[t.State]
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("  "+t.Title) + "\n\n")
+	b.WriteString(ui.TitleStyle.Render("  "+t.Title) + "\n\n")
 	b.WriteString(row("ID", t.ID))
 	b.WriteString(row("State", ss.Render(string(t.State))))
 	b.WriteString(row("Type", string(t.Type)))
@@ -316,12 +295,12 @@ func (m Model) renderDetail() string {
 	b.WriteString(row("State changed", fmtTime(t.StateChangedAt)))
 	if t.URL != "" {
 		b.WriteString("\n")
-		b.WriteString(row("URL", dimStyle.Render(t.URL)))
+		b.WriteString(row("URL", ui.DimStyle.Render(t.URL)))
 	}
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  [/] prev/next · enter navigate in · o open · space copy URL · esc close"))
+	b.WriteString(ui.DimStyle.Render("  [/] prev/next · enter navigate in · o open · space copy URL · esc close"))
 
-	box := borderStyle.Width(w).Render(b.String())
+	box := ui.BorderStyle.Width(w).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
@@ -329,7 +308,7 @@ func fmtTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format("2006-01-02 15:04") + dimStyle.Render(" ("+timeAgo(t)+")")
+	return t.Format("2006-01-02 15:04") + ui.DimStyle.Render(" ("+timeAgo(t)+")")
 }
 
 // ── Task list rendering ─────────────────────────────────────────────────
@@ -337,15 +316,15 @@ func fmtTime(t time.Time) string {
 func (m Model) renderTaskList(tasks []model.Task) string {
 	if len(tasks) == 0 {
 		if len(m.backends) == 0 {
-			return dimStyle.Render("  No backends configured. Edit ~/.config/canopy/config.yaml")
+			return ui.DimStyle.Render("  No backends configured. Edit ~/.config/canopy/config.yaml")
 		}
 		if m.err != nil {
-			return dimStyle.Render(fmt.Sprintf("  Error: %v", m.err))
+			return ui.DimStyle.Render(fmt.Sprintf("  Error: %v", m.err))
 		}
 		if len(m.navStack) > 0 {
-			return dimStyle.Render("  No subtasks.")
+			return ui.DimStyle.Render("  No subtasks.")
 		}
-		return dimStyle.Render("  No tasks found.")
+		return ui.DimStyle.Render("  No tasks found.")
 	}
 
 	var b strings.Builder
@@ -372,7 +351,7 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		cell("ASSIGNEE", 18) + sep +
 		cell("UPDATED", 7) + sep +
 		cell("CREATED", 7)
-	b.WriteString(dimStyle.Render(hdr))
+	b.WriteString(ui.DimStyle.Render(hdr))
 	b.WriteString("\n")
 
 	for i, t := range tasks {
@@ -384,13 +363,13 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		due := cell(dueIndicator(t), 2)
 		act := cell(activityIndicator(t), 2)
 		title := cell(truncate(t.Title, titleWidth), titleWidth)
-		parent := dimStyle.Render(cell(truncate(t.ParentTitle, parentWidth), parentWidth))
+		parent := ui.DimStyle.Render(cell(truncate(t.ParentTitle, parentWidth), parentWidth))
 		ss := stateColors[t.State]
 		state := ss.Render(cell(string(t.State), 12))
-		typ := typeStyle.Render(cell(string(t.Type), 12))
-		assignee := dimStyle.Render(cell(truncate(t.Assignee, 18), 18))
-		updated := dimStyle.Render(cell(timeAgo(t.UpdatedAt), 7))
-		created := dimStyle.Render(cell(timeAgo(t.CreatedAt), 7))
+		typ := ui.TypeStyle.Render(cell(string(t.Type), 12))
+		assignee := ui.DimStyle.Render(cell(truncate(t.Assignee, 18), 18))
+		updated := ui.DimStyle.Render(cell(timeAgo(t.UpdatedAt), 7))
+		created := ui.DimStyle.Render(cell(timeAgo(t.CreatedAt), 7))
 
 		line := prefix + due + act + title + sep +
 			parent + sep + state + sep + typ + sep +
@@ -406,7 +385,7 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 
 func (m Model) renderViews() string {
 	if len(m.cfg.Views) == 0 {
-		return dimStyle.Render("  No views configured. Add views to your config.yaml")
+		return ui.DimStyle.Render("  No views configured. Add views to your config.yaml")
 	}
 
 	var b strings.Builder
@@ -417,10 +396,10 @@ func (m Model) renderViews() string {
 		}
 		desc := ""
 		if v.Description != "" {
-			desc = dimStyle.Render(" — " + v.Description)
+			desc = ui.DimStyle.Render(" — " + v.Description)
 		}
 
-		line := fmt.Sprintf("%s%s%s", prefix, titleStyle.Render(v.Name), desc)
+		line := fmt.Sprintf("%s%s%s", prefix, ui.TitleStyle.Render(v.Name), desc)
 		if i == m.cursor {
 			line = selRow(line)
 		}
@@ -435,33 +414,33 @@ func (m Model) renderViews() string {
 // dueIndicator shows target-date urgency: ! overdue, ● due this week, ○ has date.
 func dueIndicator(t model.Task) string {
 	if t.TargetDate.IsZero() {
-		return dimStyle.Render("—")
+		return ui.DimStyle.Render("—")
 	}
 	now := time.Now()
 	if t.TargetDate.Before(now) && t.State != model.StateDone && t.State != model.StateClosed {
-		return overdueStyle.Render("!")
+		return ui.OverdueStyle.Render("!")
 	}
 	if t.TargetDate.Before(now.AddDate(0, 0, 7)) {
-		return dueSoonStyle.Render("●")
+		return ui.DueSoonStyle.Render("●")
 	}
-	return dimStyle.Render("○")
+	return ui.DimStyle.Render("○")
 }
 
 // activityIndicator shows freshness based on last update: ● green/blue/yellow/red.
 func activityIndicator(t model.Task) string {
 	if t.UpdatedAt.IsZero() {
-		return dimStyle.Render("—")
+		return ui.DimStyle.Render("—")
 	}
 	d := time.Since(t.UpdatedAt)
 	switch {
 	case d < 24*time.Hour:
-		return freshStyle.Render("●")
+		return ui.FreshStyle.Render("●")
 	case d < 7*24*time.Hour:
-		return recentStyle.Render("●")
+		return ui.RecentStyle.Render("●")
 	case d < 30*24*time.Hour:
-		return agingStyle.Render("●")
+		return ui.AgingStyle.Render("●")
 	default:
-		return staleStyle.Render("●")
+		return ui.StaleStyle.Render("●")
 	}
 }
 

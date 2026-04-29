@@ -152,6 +152,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.navStack = nil
 			m.clearCycleFilter()
 			m.filterQuery = ""
+			go m.saveState()
 		}
 	case "l":
 		if m.activeTab < tabViews {
@@ -160,6 +161,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.navStack = nil
 			m.clearCycleFilter()
 			m.filterQuery = ""
+			go m.saveState()
 		}
 	case "1":
 		m.activeTab = tabMyTasks
@@ -167,24 +169,28 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.navStack = nil
 		m.clearCycleFilter()
 		m.filterQuery = ""
+		go m.saveState()
 	case "2":
 		m.activeTab = tabTeam
 		m.cursor = 0
 		m.navStack = nil
 		m.clearCycleFilter()
 		m.filterQuery = ""
+		go m.saveState()
 	case "3":
 		m.activeTab = tabDone
 		m.cursor = 0
 		m.navStack = nil
 		m.clearCycleFilter()
 		m.filterQuery = ""
+		go m.saveState()
 	case "4":
 		m.activeTab = tabViews
 		m.cursor = 0
 		m.navStack = nil
 		m.clearCycleFilter()
 		m.filterQuery = ""
+		go m.saveState()
 
 	// List navigation
 	case "j", "down":

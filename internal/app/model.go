@@ -148,6 +148,10 @@ func New(o Options) Model {
 	if cs, err := cache.New(o.CacheDir, o.Cfg.CacheKey()); err == nil {
 		m.cache = cs
 		m.loadCachedTasks()
+		st := cs.LoadUIState()
+		if st.ActiveTab >= int(tabMyTasks) && st.ActiveTab <= int(tabViews) {
+			m.activeTab = tab(st.ActiveTab)
+		}
 	}
 
 	return m
@@ -189,5 +193,17 @@ func (m Model) saveCachedTasks() {
 		_ = cs.Set("my_tasks", cachedTasks{Tasks: my})
 		_ = cs.Set("team_tasks", cachedTasks{Tasks: team})
 		_ = cs.Set("done_tasks", cachedTasks{Tasks: done})
+	}()
+}
+
+// saveState persists the current UI state (active tab) to disk asynchronously.
+func (m Model) saveState() {
+	if m.cache == nil {
+		return
+	}
+	cs := m.cache
+	st := cache.UIState{ActiveTab: int(m.activeTab)}
+	go func() {
+		_ = cs.SaveUIState(st)
 	}()
 }
