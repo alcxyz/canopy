@@ -59,6 +59,12 @@ Use conventional-ish prefixes to keep history scannable:
 
 Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions. The `VERSION` file is the single source of truth.
 
+Development builds identify their source revision. Ordinary `go build` output
+uses `dev-<commit>[-dirty]`; branch-based Nix packages use
+`X.Y.Z-dev.<commit>[.dirty]`. GoReleaser artifacts retain the plain `X.Y.Z`
+release version; an intentional Nix release build uses `.#release` from clean,
+identified release source.
+
 To cut a release:
 
 1. Bump the `VERSION` file on `dev`
