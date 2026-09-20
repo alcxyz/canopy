@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/alcxyz/canopy/internal/app"
+	"github.com/alcxyz/canopy/internal/buildinfo"
 	"github.com/alcxyz/canopy/internal/config"
 )
 
@@ -37,6 +38,7 @@ func setupLog() (string, func()) {
 func main() {
 	logPath, closeLog := setupLog()
 	defer closeLog()
+	currentVersion := buildinfo.Resolve(version)
 
 	// First-run bootstrap: write the example config to the XDG path so the
 	// user has a real file to edit rather than relying on compiled defaults.
@@ -73,7 +75,7 @@ Config: ` + config.ConfigPath() + "\n")
 	// Version flag — print and exit before any TUI setup.
 	if len(os.Args) > 1 && (os.Args[1] == "-v" || os.Args[1] == "--version" || os.Args[1] == "-version" || os.Args[1] == "version" || os.Args[1] == "v") {
 		fmt.Printf("canopy %s\nconfig: %s\ncache:  %s\nlog:    %s\n",
-			version, config.ConfigPath(), config.CacheDir(), config.LogPath())
+			currentVersion, config.ConfigPath(), config.CacheDir(), config.LogPath())
 		return
 	}
 
@@ -82,7 +84,7 @@ Config: ` + config.ConfigPath() + "\n")
 	p := tea.NewProgram(
 		app.New(app.Options{
 			Cfg:      cfg,
-			Version:  version,
+			Version:  currentVersion,
 			LogPath:  logPath,
 			CfgPath:  config.ConfigPath(),
 			CacheDir: config.CacheDir(),
