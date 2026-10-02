@@ -21,7 +21,7 @@ A terminal UI for tech leads to track tasks in Azure Boards, with GitHub Issues,
 - **Task drill-down**: navigate into tasks to see subtasks, with breadcrumb trail and sibling navigation
 - **Detail overlay**: inline task detail view with dates, tags, state, and URL
 - **Create work items**: inline form for creating tasks, features, bugs, and user stories with full field support
-- **Cycle filters**: quickly narrow by date, assignee, type, or tag; date filters load older history when needed
+- **Cycle filters**: quickly narrow by date, assignee, type, or tag; date filters load older history when needed (start/target dates filter the loaded tasks)
 - **Caching**: responses cached to disk for instant startup; tab state persisted across sessions
 - **Update notifications**: footer shows when a newer release is available
 - Catppuccin Mocha colour palette

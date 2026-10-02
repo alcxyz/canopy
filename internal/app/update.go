@@ -118,7 +118,8 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 // applyTasks stores the result of a task load. Profiles that failed keep
-// their previously loaded tasks.
+// their previously loaded tasks. While a view is open the status bar belongs
+// to the view, so only the task data and error are updated.
 func (m Model) applyTasks(msg tasksLoadedMsg) Model {
 	if msg.seq != m.loadSeq {
 		return m // superseded by a newer request
@@ -126,31 +127,24 @@ func (m Model) applyTasks(msg tasksLoadedMsg) Model {
 	m.loadingTasks = false
 	logFailures(msg.failures)
 
-	if len(msg.failures) > 0 && len(msg.failures) == len(m.backends) {
+	var status string
+	if m.allFailed(msg.failures) {
 		m.err = msg.failures[0].err
-		m.statusMsg = "Error: " + failureSummary(msg.failures)
-		return m
+		status = "Error: " + failureSummary(msg.failures)
+	} else {
+		failed := failedProfiles(msg.failures)
+		m.myTasks = keepFailedProfiles(m.myTasks, msg.myTasks, failed)
+		m.teamTasks = keepFailedProfiles(m.teamTasks, msg.teamTasks, failed)
+		m.doneTasks = keepFailedProfiles(m.doneTasks, msg.doneTasks, failed)
+		m.tasksLoadedAt = time.Now()
+		m.saveCachedTasks()
+		m.err = firstFailure(msg.failures)
+		status = fmt.Sprintf("%d my · %d team · %d done",
+			len(m.myTasks), len(m.teamTasks), len(m.doneTasks)) + loadNotes(msg.truncated, msg.failures)
 	}
-
-	failed := map[string]bool{}
-	for _, f := range msg.failures {
-		failed[f.profile] = true
+	if !m.viewOpen() {
+		m.statusMsg = status
 	}
-	m.myTasks = keepFailedProfiles(m.myTasks, msg.myTasks, failed)
-	m.teamTasks = keepFailedProfiles(m.teamTasks, msg.teamTasks, failed)
-	m.doneTasks = keepFailedProfiles(m.doneTasks, msg.doneTasks, failed)
-	m.tasksLoadedAt = time.Now()
-	m.err = nil
-	m.statusMsg = fmt.Sprintf("%d my · %d team · %d done",
-		len(m.myTasks), len(m.teamTasks), len(m.doneTasks))
-	if msg.truncated {
-		m.statusMsg += truncatedNote
-	}
-	if len(msg.failures) > 0 {
-		m.err = msg.failures[0].err
-		m.statusMsg += " · failed " + failureSummary(msg.failures)
-	}
-	m.saveCachedTasks()
 	return m
 }
 
@@ -162,26 +156,47 @@ func (m Model) applyView(msg viewLoadedMsg) Model {
 	m.loadingView = false
 	logFailures(msg.failures)
 
-	if len(msg.failures) > 0 && len(msg.failures) == len(m.backends) {
-		m.err = msg.failures[0].err
+	if m.allFailed(msg.failures) {
+		m.viewErr = msg.failures[0].err
 		m.statusMsg = "Error: " + failureSummary(msg.failures)
 		return m
 	}
-	failed := map[string]bool{}
-	for _, f := range msg.failures {
+	m.viewTasks = keepFailedProfiles(m.viewTasks, msg.tasks, failedProfiles(msg.failures))
+	m.viewErr = firstFailure(msg.failures)
+	m.statusMsg = fmt.Sprintf("%s: %d tasks", m.cfg.Views[m.viewIdx].Name, len(m.viewTasks)) +
+		loadNotes(msg.truncated, msg.failures)
+	return m
+}
+
+func (m Model) allFailed(failures []profileFailure) bool {
+	return len(failures) > 0 && len(failures) == len(m.backends)
+}
+
+func failedProfiles(failures []profileFailure) map[string]bool {
+	failed := make(map[string]bool, len(failures))
+	for _, f := range failures {
 		failed[f.profile] = true
 	}
-	m.viewTasks = keepFailedProfiles(m.viewTasks, msg.tasks, failed)
-	m.err = nil
-	m.statusMsg = fmt.Sprintf("%s: %d tasks", m.cfg.Views[m.viewIdx].Name, len(m.viewTasks))
-	if msg.truncated {
-		m.statusMsg += truncatedNote
+	return failed
+}
+
+func firstFailure(failures []profileFailure) error {
+	if len(failures) == 0 {
+		return nil
 	}
-	if len(msg.failures) > 0 {
-		m.err = msg.failures[0].err
-		m.statusMsg += " · failed " + failureSummary(msg.failures)
+	return failures[0].err
+}
+
+// loadNotes describes capped results and failed profiles for the status bar.
+func loadNotes(truncated bool, failures []profileFailure) string {
+	var s string
+	if truncated {
+		s += truncatedNote
 	}
-	return m
+	if len(failures) > 0 {
+		s += " · failed " + failureSummary(failures)
+	}
+	return s
 }
 
 // truncatedNote is appended to the status when a backend capped its results.
@@ -510,6 +525,7 @@ func (m *Model) closeView() {
 	m.cursor = m.viewIdx
 	m.viewIdx = -1
 	m.viewTasks = nil
+	m.viewErr = nil
 	m.viewSeq++
 	m.loadingView = false
 }
@@ -567,11 +583,12 @@ func (m Model) currentTasks() []model.Task {
 }
 
 // childTasks returns all loaded tasks whose ParentID matches the given ID,
-// deduplicated across the task lists.
+// deduplicated across the task lists. View results come first because an
+// open view is usually fresher than the task tabs.
 func (m Model) childTasks(parentID string) []model.Task {
 	seen := make(map[string]bool)
 	var children []model.Task
-	for _, list := range [][]model.Task{m.myTasks, m.teamTasks, m.doneTasks, m.viewTasks} {
+	for _, list := range [][]model.Task{m.viewTasks, m.myTasks, m.teamTasks, m.doneTasks} {
 		for _, t := range list {
 			if t.ParentID == parentID && !seen[t.ID] {
 				seen[t.ID] = true

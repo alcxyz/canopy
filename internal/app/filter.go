@@ -47,9 +47,9 @@ func bucketRange(label string, now time.Time) (start, end time.Time, ok bool) {
 	case "last quarter":
 		return quarter.AddDate(0, -3, 0), quarter, true
 	case "last 6 months":
-		return now.AddDate(0, -6, 0), tomorrow, true
+		return today.AddDate(0, -6, 0), tomorrow, true
 	case "prior 6 months":
-		return now.AddDate(0, -12, 0), now.AddDate(0, -6, 0), true
+		return today.AddDate(0, -12, 0), today.AddDate(0, -6, 0), true
 	}
 	return time.Time{}, time.Time{}, false
 }
@@ -79,7 +79,9 @@ func bucketDays(label string, now time.Time) int {
 
 // requiredScopeDays returns the history window the task tabs need for the
 // active date filter. The window only widens while a date filter is active,
-// so cycling through buckets does not reload back and forth.
+// so cycling through buckets does not reload back and forth. Backends bound
+// queries by last change, which covers every date field except the planning
+// dates (start, target); those filter only the tasks already loaded.
 func (m Model) requiredScopeDays() int {
 	label, ok := m.activeCycleValue("date")
 	if !ok || m.viewOpen() {

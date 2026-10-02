@@ -257,6 +257,31 @@ func TestCreateFormUsesParentProfile(t *testing.T) {
 	}
 }
 
+func TestTaskLoadDoesNotHideViewError(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"})
+	m.activeTab = tabViews
+	m.viewIdx = 0
+	m.viewSeq = 1
+	m = send(m, viewLoadedMsg{seq: 1, failures: []profileFailure{{"A", errors.New("view down")}}})
+	cmd := m.startLoad()
+	m = send(m, cmd())
+	if m.viewErr == nil || !strings.Contains(m.statusMsg, "view down") {
+		t.Errorf("view failure hidden: viewErr=%v status=%q", m.viewErr, m.statusMsg)
+	}
+	if !strings.Contains(m.View(), "view down") {
+		t.Error("empty failed view should show its error")
+	}
+}
+
+func TestChildTasksPreferViewCopy(t *testing.T) {
+	m := newTestModel()
+	m.myTasks = []model.Task{{ID: "2", ParentID: "1", State: model.StateInProgress}}
+	m.viewTasks = []model.Task{{ID: "2", ParentID: "1", State: model.StateDone}}
+	if got := m.childTasks("1"); len(got) != 1 || got[0].State != model.StateDone {
+		t.Errorf("children = %+v", got)
+	}
+}
+
 func TestBucketRanges(t *testing.T) {
 	now := time.Date(2026, 10, 2, 15, 0, 0, 0, time.UTC) // a Friday
 
@@ -271,6 +296,9 @@ func TestBucketRanges(t *testing.T) {
 	}
 	if dateInBucket(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), "today", now) {
 		t.Error("tomorrow must not be today")
+	}
+	if !dateInBucket(time.Date(2026, 4, 2, 9, 0, 0, 0, time.UTC), "last 6 months", now) {
+		t.Error("six-month buckets should start at midnight")
 	}
 
 	cases := map[string]int{"today": 0, "this week": 4, "last week": 11, "this month": 1, "last quarter": 93}

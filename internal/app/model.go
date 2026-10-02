@@ -41,6 +41,7 @@ type Model struct {
 	// Views tab: index of the open view (-1 shows the view list) and its tasks.
 	viewIdx   int
 	viewTasks []model.Task
+	viewErr   error // error from the last view load
 
 	// Loading. Each request carries a sequence number so that responses from
 	// superseded requests are dropped instead of overwriting newer data.

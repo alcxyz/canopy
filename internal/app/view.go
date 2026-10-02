@@ -196,9 +196,13 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		if len(m.backends) == 0 {
 			return ui.DimStyle.Render("  No backends configured. Edit "+m.cfgPath) + "\n"
 		}
+		err := m.err
+		if m.viewOpen() {
+			err = m.viewErr
+		}
 		switch {
-		case m.err != nil:
-			return ui.DimStyle.Render(fmt.Sprintf("  Error: %v", m.err)) + "\n"
+		case err != nil:
+			return ui.DimStyle.Render(fmt.Sprintf("  Error: %v", err)) + "\n"
 		case m.loadingTasks || m.loadingView:
 			return ui.DimStyle.Render("  Loading…") + "\n"
 		case len(m.navStack) > 0:

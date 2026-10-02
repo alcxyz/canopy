@@ -9,9 +9,11 @@ import (
 	"strings"
 )
 
-// OpenURL opens url with the operating system's default browser. It waits for
-// the opener (xdg-open, open, …), which normally exits once it has handed the
-// URL to the browser, so callers should run it off the UI goroutine.
+// OpenURL opens url with the operating system's default browser and reports
+// whether the opener (xdg-open, open, …) failed. It waits for the opener,
+// which may run until the browser exits, so callers should run it off the UI
+// goroutine. The opener's output is discarded rather than piped so that a
+// browser inheriting it cannot keep the call waiting.
 func OpenURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -22,18 +24,10 @@ func OpenURL(url string) error {
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("%w: %s", err, firstLine(msg))
-		}
-		return err
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %w", cmd.Args[0], err)
 	}
 	return nil
-}
-
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return line
 }
 
 // clipboardCommands lists the clipboard writers tried on Linux and BSD, in order.
