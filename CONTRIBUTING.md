@@ -33,6 +33,8 @@ go vet ./...
 - `internal/cache/` -- task caching
 - `internal/config/` -- YAML config loading
 - `internal/model/` -- task model
+- `internal/platform/` -- browser and clipboard integration
+- `internal/buildinfo/` -- build version identity
 - `internal/ui/` -- help, splash, detail overlays, tabs, styles, helpers
 
 ## Making changes
