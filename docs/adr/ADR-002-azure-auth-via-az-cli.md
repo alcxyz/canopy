@@ -31,5 +31,13 @@ This becomes the primary auth path for the Azure Boards backend. PAT-based auth 
 - `az` must be installed and the user must be logged in (`az login`) for the Azure Boards backend to work. A clear, actionable error is returned if the command fails or produces no token.
 - `token_file` and `AZURE_DEVOPS_PAT` config fields are removed from the profile schema.
 - HTTP auth changes from Basic (`Authorization: Basic base64(:PAT)`) to Bearer (`Authorization: Bearer <access_token>`).
-- Tokens are short-lived (~1 hour); az CLI handles refresh transparently. No token caching is needed in Canopy.
+- Tokens are short-lived (~1 hour); az CLI handles refresh transparently. Canopy only reuses a token in memory until shortly before expiry (see the amendment below).
 - Non-interactive environments (CI, cron) work via `az login --service-principal` — no Canopy-specific secret handling required.
+
+## Amendment (2026-10-02): in-memory token reuse
+
+Fetching a token per HTTP request started the az CLI (roughly a second each)
+six to nine times per refresh, making refreshes slow. Canopy now keeps the
+token in process memory and reuses it until five minutes before the expiry az
+reports (or for five minutes when no expiry is reported). The token is never
+persisted, and az remains the only credential source.

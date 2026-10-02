@@ -137,7 +137,10 @@ func TestMapAzureState(t *testing.T) {
 		{"Closed", "done"},
 		{"Done", "done"},
 		{"Removed", "closed"},
-		{"Custom", "custom"}, // unknown maps to lowercase
+		{"To Do", "todo"}, // Scrum / Basic
+		{"In Progress", "in-progress"},
+		{"Doing", "in-progress"}, // Basic
+		{"Custom", "custom"},     // unknown maps to lowercase
 	}
 	for _, c := range cases {
 		if got := string(mapAzureState(c.azure)); got != c.want {

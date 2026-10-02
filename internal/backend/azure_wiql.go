@@ -11,10 +11,12 @@ import (
 
 // ── State mapping ───────────────────────────────────────────────────────
 
-// canopy → Azure DevOps state names (covers Agile + CMMI process templates).
+// canopy → Azure DevOps state names (covers the Agile, Scrum, CMMI and Basic
+// process templates). Names absent from a project's process simply match
+// nothing.
 var stateToAzure = map[model.TaskState][]string{
-	model.StateTodo:       {"New", "Proposed"},
-	model.StateInProgress: {"Active", "Committed"},
+	model.StateTodo:       {"New", "Proposed", "To Do", "Approved"},
+	model.StateInProgress: {"Active", "Committed", "In Progress", "Doing"},
 	model.StateInReview:   {"Resolved"},
 	model.StateDone:       {"Closed", "Done"},
 	model.StateClosed:     {"Closed", "Done", "Removed"},
@@ -22,14 +24,18 @@ var stateToAzure = map[model.TaskState][]string{
 
 // Azure → canopy (reverse lookup).
 var azureToState = map[string]model.TaskState{
-	"New":       model.StateTodo,
-	"Proposed":  model.StateTodo,
-	"Active":    model.StateInProgress,
-	"Committed": model.StateInProgress,
-	"Resolved":  model.StateInReview,
-	"Closed":    model.StateDone,
-	"Done":      model.StateDone,
-	"Removed":   model.StateClosed,
+	"New":         model.StateTodo,
+	"Proposed":    model.StateTodo,
+	"To Do":       model.StateTodo,
+	"Approved":    model.StateTodo,
+	"Active":      model.StateInProgress,
+	"Committed":   model.StateInProgress,
+	"In Progress": model.StateInProgress,
+	"Doing":       model.StateInProgress,
+	"Resolved":    model.StateInReview,
+	"Closed":      model.StateDone,
+	"Done":        model.StateDone,
+	"Removed":     model.StateClosed,
 }
 
 func mapAzureState(s string) model.TaskState {
@@ -69,7 +75,8 @@ func mapAzureType(s string) model.TaskType {
 
 // buildWIQL constructs a WIQL query from a canopy filter.
 // project scopes results to a single Azure DevOps project.
-// iterPath is the resolved iteration path (only needed when filter.Sprint == "current").
+// iterPath is the iteration path resolved from filter.Sprint; empty means no
+// sprint restriction.
 func buildWIQL(filter config.Filter, project string, team []string, iterPath string) string {
 	var clauses []string
 
@@ -138,9 +145,6 @@ func buildWIQL(filter config.Filter, project string, team []string, iterPath str
 	if iterPath != "" {
 		clauses = append(clauses,
 			fmt.Sprintf("[System.IterationPath] = %s", quote(iterPath)))
-	} else if filter.Sprint != "" && filter.Sprint != "current" {
-		clauses = append(clauses,
-			fmt.Sprintf("[System.IterationPath] = %s", quote(filter.Sprint)))
 	}
 
 	// Labels / tags
