@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/alcxyz/canopy/internal/backend"
+	"github.com/alcxyz/canopy/internal/cache"
 	"github.com/alcxyz/canopy/internal/config"
 	"github.com/alcxyz/canopy/internal/model"
 )
@@ -441,5 +442,24 @@ func TestMultilineViewDescriptionsKeepOneRow(t *testing.T) {
 	}
 	if lines := strings.Count(m.View(), "\n") + 1; lines > m.height {
 		t.Errorf("view list rendered %d lines for height %d", lines, m.height)
+	}
+}
+
+func TestCachedTasksRestoreLoadedWindow(t *testing.T) {
+	dir := t.TempDir()
+	cs, err := cache.New(dir, config.Config{}.CacheKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.Set("my_tasks", cachedTasks{Tasks: tasks("A", 2), Days: 93}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(Options{CacheDir: dir})
+	if len(m.myTasks) != 2 || m.loadedDays != 93 {
+		t.Errorf("restored %d tasks with %d days", len(m.myTasks), m.loadedDays)
+	}
+	if m.tasksStatus == "" {
+		t.Error("closing a view before the first load should restore the cached status")
 	}
 }

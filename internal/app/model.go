@@ -119,6 +119,7 @@ type Options struct {
 // cachedTasks is the shape persisted in the cache files.
 type cachedTasks struct {
 	Tasks []model.Task `json:"tasks"`
+	Days  int          `json:"days"` // history window the tasks were loaded with
 }
 
 // New creates a new Model from the loaded config.
@@ -192,6 +193,7 @@ func summarize(problems []string) string {
 // by a background refresh.
 func (m *Model) loadCachedTasks() {
 	var cachedAt time.Time
+	days := 0
 	load := func(key string) []model.Task {
 		e := m.cache.Get(key, 0)
 		if e == nil {
@@ -202,6 +204,7 @@ func (m *Model) loadCachedTasks() {
 			return nil
 		}
 		cachedAt = e.CachedAt
+		days = max(days, ct.Days)
 		return ct.Tasks
 	}
 	m.myTasks = load("my_tasks")
@@ -209,7 +212,11 @@ func (m *Model) loadCachedTasks() {
 	m.doneTasks = load("done_tasks")
 	if len(m.myTasks)+len(m.teamTasks)+len(m.doneTasks) > 0 {
 		m.tasksLoadedAt = cachedAt
+		if days > 0 {
+			m.loadedDays = days
+		}
 		m.statusMsg = "showing cached data…"
+		m.tasksStatus = m.statusMsg
 	}
 }
 
@@ -222,9 +229,10 @@ func (m Model) saveCachedTasks() {
 	my := m.myTasks
 	team := m.teamTasks
 	done := m.doneTasks
+	days := m.loadedDays
 	go func() {
 		for key, tasks := range map[string][]model.Task{"my_tasks": my, "team_tasks": team, "done_tasks": done} {
-			if err := cs.Set(key, cachedTasks{Tasks: tasks}); err != nil {
+			if err := cs.Set(key, cachedTasks{Tasks: tasks, Days: days}); err != nil {
 				log.Printf("cache: saving %s: %v", key, err)
 			}
 		}

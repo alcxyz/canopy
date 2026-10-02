@@ -270,11 +270,13 @@ func UpdatedSinceDays(s string) (int, bool) {
 }
 
 // CacheKey returns a string derived from profile settings so the cache is
-// automatically invalidated when the user changes org/project/owner.
+// automatically invalidated when the user renames a profile or changes its
+// org/project/owner. Cached tasks record their profile name, so a rename must
+// invalidate them.
 func (c Config) CacheKey() string {
 	var parts []string
 	for _, p := range c.Profiles {
-		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s", p.Backend, p.Org, p.Project, p.Owner))
+		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s|%s", p.Name, p.Backend, p.Org, p.Project, p.Owner))
 	}
 	return strings.Join(parts, ";")
 }
