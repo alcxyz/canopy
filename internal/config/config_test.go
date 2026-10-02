@@ -244,6 +244,21 @@ refresh_secs: 5m
 	}
 }
 
+func TestUniqueProfileNamesAvoidsExistingNames(t *testing.T) {
+	profiles := []Profile{{Name: "Work (2)"}, {Name: "Work"}, {Name: "Work"}, {}}
+	problems := uniqueProfileNames(profiles)
+	seen := map[string]bool{}
+	for _, p := range profiles {
+		if seen[p.Name] {
+			t.Fatalf("duplicate name %q in %+v", p.Name, profiles)
+		}
+		seen[p.Name] = true
+	}
+	if profiles[2].Name != "Work (3)" || profiles[3].Name != "profile 4" || len(problems) != 1 {
+		t.Errorf("profiles = %+v, problems = %q", profiles, problems)
+	}
+}
+
 func TestParse_DuplicateProfileNamesAreMadeUnique(t *testing.T) {
 	cfg, problems := parse([]byte(`
 profiles:

@@ -145,8 +145,8 @@ func TestMatchIteration(t *testing.T) {
 	if got, err := matchIteration(its, "SPRINT 1"); err != nil || got != `p\Sprint 1` {
 		t.Errorf("by name = %q, %v", got, err)
 	}
-	if _, err := matchIteration(its, "Sprint 9"); err == nil {
-		t.Error("expected error for unknown sprint")
+	if got, err := matchIteration(its, "MyProject"); err != nil || got != "MyProject" {
+		t.Errorf("unknown name should be used as a path, got %q, %v", got, err)
 	}
 }
 

@@ -52,8 +52,6 @@ jobs:
   release:
     name: Release
     needs: check
-    permissions:
-      contents: write # push release tags
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
@@ -97,9 +95,25 @@ jobs:
             echo "  OK"
           done
 
+  publish:
+    name: Publish
+    needs: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write # push release tags and publish the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Auto-tag release
         id: tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           VERSION="v$(cat VERSION)"
           if git tag -l "$VERSION" | grep -q . || git ls-remote --tags origin "$VERSION" | grep -q .; then
@@ -125,7 +139,7 @@ jobs:
 
   nix:
     name: Nix
-    needs: release
+    needs: publish
     permissions:
       contents: write # commit vendorHash updates
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

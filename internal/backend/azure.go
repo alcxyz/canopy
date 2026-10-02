@@ -328,7 +328,8 @@ func (a *azureBoards) currentIterationPath(ctx context.Context) (string, error) 
 // resolveIterationPath maps a filter sprint value to an iteration path:
 // "current" and "previous" are resolved from the team's iterations, a value
 // containing a backslash is used as a full path, and anything else is matched
-// against iteration names.
+// against the team's iteration names. Values matching no team iteration are
+// used as a path as given, which covers root paths such as the project name.
 func (a *azureBoards) resolveIterationPath(ctx context.Context, sprint string) (string, error) {
 	switch {
 	case sprint == "":
@@ -347,7 +348,7 @@ func (a *azureBoards) resolveIterationPath(ctx context.Context, sprint string) (
 }
 
 // matchIteration finds the iteration path for a sprint name or "previous"
-// (the most recently finished iteration).
+// (the most recently finished iteration). Unknown names are returned as is.
 func matchIteration(its []iteration, sprint string) (string, error) {
 	if sprint == "previous" {
 		var prev *iteration
@@ -371,7 +372,7 @@ func matchIteration(its []iteration, sprint string) (string, error) {
 			return it.Path, nil
 		}
 	}
-	return "", fmt.Errorf("no team iteration named %q", sprint)
+	return sprint, nil
 }
 
 func (a *azureBoards) teamName() string {

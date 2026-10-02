@@ -166,22 +166,37 @@ func parse(data []byte) (Config, []string) {
 	if cfg.RefreshSecs <= 0 {
 		cfg.RefreshSecs = Default.RefreshSecs
 	}
-	// Profile names identify profiles at runtime, so they must be unique.
-	seen := map[string]bool{}
-	for i := range cfg.Profiles {
-		p := &cfg.Profiles[i]
-		if p.Name == "" {
-			p.Name = fmt.Sprintf("profile %d", i+1)
+	problems = append(problems, uniqueProfileNames(cfg.Profiles)...)
+	return cfg, append(problems, cfg.Problems()...)
+}
+
+// uniqueProfileNames fills in missing profile names and renames duplicates,
+// since names identify profiles at runtime. It returns a problem per rename.
+func uniqueProfileNames(profiles []Profile) []string {
+	var problems []string
+	taken := map[string]bool{}
+	for i := range profiles {
+		if profiles[i].Name == "" {
+			profiles[i].Name = fmt.Sprintf("profile %d", i+1)
 		}
+		taken[profiles[i].Name] = true
+	}
+
+	seen := map[string]bool{}
+	for i := range profiles {
+		p := &profiles[i]
 		if seen[p.Name] {
-			renamed := fmt.Sprintf("%s (%d)", p.Name, i+1)
+			renamed := p.Name
+			for n := 2; taken[renamed]; n++ {
+				renamed = fmt.Sprintf("%s (%d)", p.Name, n)
+			}
 			problems = append(problems, fmt.Sprintf("duplicate profile name %q; using %q", p.Name, renamed))
 			p.Name = renamed
+			taken[renamed] = true
 		}
 		seen[p.Name] = true
 	}
-
-	return cfg, append(problems, cfg.Problems()...)
+	return problems
 }
 
 // oneLine collapses a multi-line error message for the status bar.
