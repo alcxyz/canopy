@@ -328,21 +328,26 @@ func (a *azureBoards) currentIterationPath(ctx context.Context) (string, error) 
 // resolveIterationPath maps a filter sprint value to an iteration path:
 // "current" and "previous" are resolved from the team's iterations, a value
 // containing a backslash is used as a full path, and anything else is matched
-// against the team's iteration names. Values matching no team iteration are
-// used as a path as given, which covers root paths such as the project name.
+// against the team's iteration names. Values matching no team iteration, or
+// that cannot be looked up, are used as a path as given; this keeps root
+// paths such as the project name working.
 func (a *azureBoards) resolveIterationPath(ctx context.Context, sprint string) (string, error) {
 	switch {
 	case sprint == "":
 		return "", nil
 	case sprint == "current":
 		return a.currentIterationPath(ctx)
-	case strings.Contains(sprint, `\`):
+	case strings.Contains(sprint, `\`), strings.EqualFold(sprint, a.profile.Project):
 		return sprint, nil
 	}
 
 	its, err := a.teamIterations(ctx, "")
 	if err != nil {
-		return "", err
+		if sprint == "previous" {
+			return "", err
+		}
+		log.Printf("azure-boards %s: looking up sprint %q: %v; using it as a path", a.profile.Name, sprint, err)
+		return sprint, nil
 	}
 	return matchIteration(its, sprint)
 }

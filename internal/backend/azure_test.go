@@ -287,3 +287,19 @@ func TestTokenCache(t *testing.T) {
 		t.Errorf("token after invalidate = %q", again)
 	}
 }
+
+func TestResolveIterationPath_FallsBackToLiteral(t *testing.T) {
+	a := newTestAzure(t, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r) // team does not exist
+	})
+	ctx := context.Background()
+	if got, err := a.resolveIterationPath(ctx, "Release 1"); err != nil || got != "Release 1" {
+		t.Errorf("lookup failure: got %q, %v", got, err)
+	}
+	if got, err := a.resolveIterationPath(ctx, "proj"); err != nil || got != "proj" {
+		t.Errorf("project root: got %q, %v", got, err)
+	}
+	if _, err := a.resolveIterationPath(ctx, "previous"); err == nil {
+		t.Error("previous cannot be resolved without iterations")
+	}
+}

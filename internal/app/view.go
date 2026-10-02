@@ -203,7 +203,7 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		switch {
 		case err != nil:
 			return ui.DimStyle.Render(fmt.Sprintf("  Error: %v", err)) + "\n"
-		case m.loadingTasks || m.loadingView:
+		case m.viewOpen() && m.loadingView, !m.viewOpen() && m.loadingTasks:
 			return ui.DimStyle.Render("  Loading…") + "\n"
 		case len(m.navStack) > 0:
 			return ui.DimStyle.Render("  No loaded subtasks.") + "\n"

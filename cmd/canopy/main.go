@@ -61,6 +61,10 @@ Navigation:
 func main() {
 	currentVersion := buildinfo.Resolve(version)
 
+	if len(os.Args) > 2 {
+		fmt.Fprintf(os.Stderr, "canopy: unexpected arguments %q\n\n%s", os.Args[2:], usage)
+		os.Exit(2)
+	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "-h", "--help", "-help", "help", "h":

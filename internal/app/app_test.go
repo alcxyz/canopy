@@ -420,3 +420,13 @@ func TestInfoBarShowsLoadedScope(t *testing.T) {
 		t.Errorf("info bar = %q", m.infoBarText())
 	}
 }
+
+func TestEmptyViewIgnoresTaskLoading(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"})
+	m.activeTab = tabViews
+	m.viewIdx = 0
+	m.loadingTasks = true
+	if out := m.View(); strings.Contains(out, "Loading…") || !strings.Contains(out, "No tasks found") {
+		t.Errorf("empty view while tabs load:\n%s", out)
+	}
+}
