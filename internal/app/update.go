@@ -2,98 +2,107 @@ package app
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/alcxyz/canopy/internal/model"
+	"github.com/alcxyz/canopy/internal/platform"
 )
 
 func (m Model) Init() tea.Cmd {
 	if len(m.backends) == 0 {
 		return nil
 	}
-	m.loading = true
+	// The first load is started from Update so that its cancel function is
+	// kept and a quick follow-up refresh can supersede it.
 	return tea.Batch(
-		m.loadAllTasks(),
-		tickCmd(time.Duration(m.cfg.RefreshSecs)*time.Second),
+		func() tea.Msg { return refreshMsg{} },
+		tickCmd(m.refreshInterval()),
 		checkLatestVersion(m.version),
 	)
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Overlays intercept keys first.
-	if m.showHelp {
-		if km, ok := msg.(tea.KeyMsg); ok {
-			return m.handleHelpKey(km)
-		}
-	}
-	if m.showSplash {
-		if km, ok := msg.(tea.KeyMsg); ok {
-			return m.handleSplashKey(km)
-		}
-	}
-	if m.showDetail {
-		if km, ok := msg.(tea.KeyMsg); ok {
-			return m.handleDetailKey(km)
-		}
-	}
-	if m.showForm {
-		if km, ok := msg.(tea.KeyMsg); ok {
-			return m.handleFormKey(km)
-		}
-	}
+func (m Model) refreshInterval() time.Duration {
+	return time.Duration(m.cfg.RefreshSecs) * time.Second
+}
 
-	// In text-filter mode, handle input first.
-	if m.filtering {
-		if km, ok := msg.(tea.KeyMsg); ok {
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m, cmd := m.update(msg)
+	m.clampCursor()
+	m.scrollToCursor()
+	return m, cmd
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
+	if km, ok := msg.(tea.KeyMsg); ok {
+		if km.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		// Overlays and text input intercept keys first.
+		switch {
+		case m.showHelp:
+			return m.handleHelpKey(km)
+		case m.showSplash:
+			m.showSplash = false
+			return m, nil
+		case m.showDetail:
+			return m.handleDetailKey(km)
+		case m.showForm:
+			return m.handleFormKey(km)
+		case m.filtering:
 			return m.handleFilterKey(km)
 		}
+		return m.handleKey(km)
 	}
 
 	switch msg := msg.(type) {
 	case tasksLoadedMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.err = msg.err
-			m.statusMsg = fmt.Sprintf("Error: %v", msg.err)
-		} else {
-			m.err = nil
-			m.myTasks = msg.myTasks
-			m.teamTasks = msg.teamTasks
-			m.doneTasks = msg.doneTasks
-			m.tasksLoadedAt = time.Now()
-			m.statusMsg = fmt.Sprintf("%d my · %d team · %d done",
-				len(m.myTasks), len(m.teamTasks), len(m.doneTasks))
-			m.saveCachedTasks()
-		}
-		return m, nil
+		return m.applyTasks(msg), nil
+
+	case viewLoadedMsg:
+		return m.applyView(msg), nil
 
 	case taskCreatedMsg:
-		m.formSubmitting = false
+		m.form.submitting = false
 		if msg.err != nil {
-			m.formErr = msg.err.Error()
+			m.form.err = msg.err.Error()
 			return m, nil
 		}
 		m.showForm = false
 		m.statusMsg = fmt.Sprintf("Created %s #%s: %s", msg.task.Type, msg.task.ID, msg.task.Title)
-		m.loading = true
-		return m, m.loadAllTasks()
+		return m, m.refresh()
 
 	case iterationResolvedMsg:
-		if msg.err == nil {
-			m.formIteration = msg.path
+		switch {
+		case msg.formSeq != m.formSeq || !m.showForm:
+			// The lookup belongs to a form that has since closed.
+		case msg.err != nil:
+			log.Printf("resolving current iteration: %v", msg.err)
+		case m.form.values[formFieldIteration] == "":
+			m.form.values[formFieldIteration] = msg.path
 		}
 		return m, nil
 
-	case tickMsg:
-		if len(m.backends) > 0 {
-			return m, tea.Batch(
-				m.loadAllTasks(),
-				tickCmd(time.Duration(m.cfg.RefreshSecs)*time.Second),
-			)
+	case openResultMsg:
+		if msg.err != nil {
+			m.statusMsg = "open failed: " + msg.err.Error()
 		}
 		return m, nil
+
+	case refreshMsg:
+		return m, m.startLoad()
+
+	case tickMsg:
+		cmds := []tea.Cmd{tickCmd(m.refreshInterval())}
+		if !m.loadingTasks {
+			cmds = append(cmds, m.startLoad())
+		}
+		if m.viewOpen() && !m.loadingView {
+			cmds = append(cmds, m.startViewLoad())
+		}
+		return m, tea.Batch(cmds...)
 
 	case versionCheckMsg:
 		m.latestVersion = msg.latest
@@ -108,15 +117,137 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ready = true
 		return m, nil
-
-	case tea.KeyMsg:
-		return m.handleKey(msg)
 	}
 
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// applyTasks stores the result of a task load. Profiles that failed keep
+// their previously loaded tasks. While a view is open the status bar belongs
+// to the view, so only the task data and error are updated.
+func (m Model) applyTasks(msg tasksLoadedMsg) Model {
+	if msg.seq != m.loadSeq {
+		return m // superseded by a newer request
+	}
+	m.loadingTasks = false
+	logFailures(msg.failures)
+
+	var status string
+	if m.allFailed(msg.failures) {
+		m.err = msg.failures[0].err
+		status = "Error: " + failureSummary(msg.failures)
+	} else {
+		failed := failedProfiles(msg.failures)
+		m.myTasks = keepFailedProfiles(m.myTasks, msg.myTasks, failed)
+		m.teamTasks = keepFailedProfiles(m.teamTasks, msg.teamTasks, failed)
+		m.doneTasks = keepFailedProfiles(m.doneTasks, msg.doneTasks, failed)
+		m.tasksLoadedAt = time.Now()
+		if len(msg.failures) == 0 {
+			m.loadedDays = msg.days
+		} else {
+			// Failed profiles keep data from the earlier, possibly narrower load.
+			m.loadedDays = min(m.loadedDays, msg.days)
+		}
+		m.saveCachedTasks()
+		m.err = nil // partial failures are reported in the status bar
+		status = fmt.Sprintf("%d my · %d team · %d done",
+			len(m.myTasks), len(m.teamTasks), len(m.doneTasks)) + loadNotes(msg.truncated, msg.failures)
+	}
+	m.tasksStatus = status
+	if !m.viewOpen() {
+		m.statusMsg = status
+	}
+	return m
+}
+
+// applyView stores the result of a view load.
+func (m Model) applyView(msg viewLoadedMsg) Model {
+	if msg.seq != m.viewSeq || !m.viewOpen() {
+		return m
+	}
+	m.loadingView = false
+	logFailures(msg.failures)
+
+	if m.allFailed(msg.failures) {
+		m.viewErr = msg.failures[0].err
+		m.statusMsg = "Error: " + failureSummary(msg.failures)
+		return m
+	}
+	m.viewTasks = keepFailedProfiles(m.viewTasks, msg.tasks, failedProfiles(msg.failures))
+	m.viewErr = nil
+	m.statusMsg = fmt.Sprintf("%s: %d tasks", m.cfg.Views[m.viewIdx].Name, len(m.viewTasks)) +
+		loadNotes(msg.truncated, msg.failures)
+	return m
+}
+
+func (m Model) allFailed(failures []profileFailure) bool {
+	return len(failures) > 0 && len(failures) == len(m.backends)
+}
+
+func failedProfiles(failures []profileFailure) map[string]bool {
+	failed := make(map[string]bool, len(failures))
+	for _, f := range failures {
+		failed[f.profile] = true
+	}
+	return failed
+}
+
+// loadNotes describes capped results and failed profiles for the status bar.
+func loadNotes(truncated bool, failures []profileFailure) string {
+	var s string
+	if truncated {
+		s += truncatedNote
+	}
+	if len(failures) > 0 {
+		s += " · failed " + failureSummary(failures)
+	}
+	return s
+}
+
+// truncatedNote is appended to the status when a backend capped its results.
+const truncatedNote = " · some results capped (newest kept)"
+
+// keepFailedProfiles returns fresh plus the previous tasks of profiles whose
+// refresh failed, so a failing profile keeps showing its last known data.
+func keepFailedProfiles(prev, fresh []model.Task, failed map[string]bool) []model.Task {
+	if len(failed) == 0 {
+		return fresh
+	}
+	for _, t := range prev {
+		if failed[t.Profile] {
+			fresh = append(fresh, t)
+		}
+	}
+	return fresh
+}
+
+func logFailures(failures []profileFailure) {
+	for _, f := range failures {
+		log.Printf("profile %q: %v", f.profile, f.err)
+	}
+}
+
+func failureSummary(failures []profileFailure) string {
+	s := fmt.Sprintf("%s: %v", failures[0].profile, failures[0].err)
+	if len(failures) > 1 {
+		s += fmt.Sprintf(" (+%d more, see log)", len(failures)-1)
+	}
+	return s
+}
+
+// refresh reloads the task tabs and, when one is open, the current view.
+func (m *Model) refresh() tea.Cmd {
+	if len(m.backends) == 0 {
+		return nil
+	}
+	cmds := []tea.Cmd{m.startLoad()}
+	if m.viewOpen() {
+		cmds = append(cmds, m.startViewLoad())
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	key := msg.String()
 
 	// gg — go to first item (vim-style double-g with timeout)
@@ -133,155 +264,104 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.prevKey = ""
 
 	switch key {
-	case "q", "ctrl+c":
+	case "q":
 		return m, tea.Quit
 
 	// Overlays
 	case "?":
 		m.showHelp = true
-		return m, nil
 	case "!":
 		m.showSplash = true
-		return m, nil
 
 	// Tab navigation
 	case "h":
 		if m.activeTab > 0 {
-			m.activeTab--
-			m.cursor = 0
-			m.navStack = nil
-			m.clearCycleFilter()
-			m.filterQuery = ""
-			go m.saveState()
+			return m, m.switchTab(m.activeTab - 1)
 		}
 	case "l":
 		if m.activeTab < tabViews {
-			m.activeTab++
-			m.cursor = 0
-			m.navStack = nil
-			m.clearCycleFilter()
-			m.filterQuery = ""
-			go m.saveState()
+			return m, m.switchTab(m.activeTab + 1)
 		}
-	case "1":
-		m.activeTab = tabMyTasks
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
-	case "2":
-		m.activeTab = tabTeam
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
-	case "3":
-		m.activeTab = tabDone
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
-	case "4":
-		m.activeTab = tabViews
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
+	case "1", "2", "3", "4":
+		return m, m.switchTab(tab(key[0] - '1'))
 
 	// List navigation
 	case "j", "down":
 		m.cursor++
-		m.clampCursor()
 	case "k", "up":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.cursor--
 	case "G":
 		m.cursor = m.listLen() - 1
-		if m.cursor < 0 {
-			m.cursor = 0
-		}
+	case "ctrl+d", "pgdown":
+		m.cursor += m.pageStep(key)
+	case "ctrl+u", "pgup":
+		m.cursor -= m.pageStep(key)
 
 	// Cycle filters
 	case "f":
-		if m.activeTab != tabViews {
+		if m.showsTasks() {
 			m.doCycleFilter("date")
+			return m, m.syncScope()
 		}
 	case "F":
-		if m.activeTab != tabViews {
+		if m.showsTasks() {
 			m.doCycleDateField()
 		}
 	case "d":
-		if m.activeTab != tabViews {
+		if m.showsTasks() {
 			m.doCycleFilter("assignee")
+			return m, m.syncScope()
 		}
 	case "s":
-		if m.activeTab != tabViews {
+		if m.showsTasks() {
 			m.doCycleFilter("type")
+			return m, m.syncScope()
 		}
 	case "t":
-		if m.activeTab != tabViews {
+		if m.showsTasks() {
 			m.doCycleFilter("tag")
+			return m, m.syncScope()
 		}
 
 	// Text search
 	case "/":
-		if m.activeTab != tabViews {
+		if m.showsTasks() {
 			m.filtering = true
 			m.filterQuery = ""
 		}
 
 	// Clear filters / navigate back
 	case "esc":
-		if m.cycleField != "" || m.filterQuery != "" {
-			m.clearCycleFilter()
-			m.filterQuery = ""
-			m.cursor = 0
-		} else if len(m.navStack) > 0 {
-			m.navStack = m.navStack[:len(m.navStack)-1]
-			m.cursor = 0
+		switch {
+		case m.hasFilters():
+			m.clearFilters()
+			return m, m.syncScope()
+		case len(m.navStack) > 0:
+			m.popNav()
+		case m.viewOpen():
+			m.closeView()
 		}
 	case "backspace":
-		if len(m.navStack) > 0 {
-			m.navStack = m.navStack[:len(m.navStack)-1]
-			m.cursor = 0
+		switch {
+		case len(m.navStack) > 0:
+			m.popNav()
+		case m.viewOpen():
+			m.closeView()
 		}
 
 	// Actions
 	case "c":
-		if m.activeTab != tabViews && m.canCreate() {
-			m.showForm = true
-			m.formField = formFieldTitle
-			m.formTitle = ""
-			m.formDesc = ""
-			m.formTags = ""
-			m.formStartDate = ""
-			m.formTargetDate = ""
-			m.formAcceptCriteria = ""
-			m.formErr = ""
-			m.formSubmitting = false
-			m.formType = m.defaultFormTypeIndex()
-			m.formAssignee = m.defaultAssignee()
-			m.formIteration = ""
-			return m, m.resolveIteration()
+		if m.activeTab != tabViews {
+			return m, m.openCreateForm()
 		}
-
 	case "r":
 		if len(m.backends) > 0 {
-			m.loading = true
 			m.statusMsg = "Refreshing..."
-			return m, m.loadAllTasks()
+			return m, m.refresh()
 		}
 	case "enter":
-		if m.activeTab == tabViews && m.cursor < len(m.cfg.Views) {
-			v := m.cfg.Views[m.cursor]
-			m.loading = true
-			m.statusMsg = fmt.Sprintf("Loading %s...", v.Name)
-			return m, m.loadViewTasks(v.Filters)
+		if m.activeTab == tabViews && !m.viewOpen() {
+			return m, m.openView(m.cursor)
 		}
 		if t, ok := m.taskAtCursor(); ok {
 			m.navStack = append(m.navStack, t)
@@ -293,26 +373,33 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailTask = t
 		}
 	case " ":
-		if t, ok := m.taskAtCursor(); ok && t.URL != "" {
-			copyToClipboard(t.URL)
-			m.statusMsg = "copied URL to clipboard"
+		if t, ok := m.taskAtCursor(); ok {
+			m.copyURL(t)
 		}
 	case "o":
-		m.openInBrowser()
+		if t, ok := m.taskAtCursor(); ok && t.URL != "" {
+			return m, openURL(t.URL)
+		}
 	case "[":
-		if len(m.navStack) > 0 {
-			m.navigateSibling(-1)
-		}
+		m.navigateSibling(-1)
 	case "]":
-		if len(m.navStack) > 0 {
-			m.navigateSibling(1)
-		}
+		m.navigateSibling(1)
 	}
 
 	return m, nil
 }
 
-func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// pageStep returns the cursor jump for paging keys: half a page for
+// ctrl+d/ctrl+u, a full page otherwise.
+func (m Model) pageStep(key string) int {
+	rows := m.visibleRows()
+	if key == "ctrl+d" || key == "ctrl+u" {
+		return max(1, rows/2)
+	}
+	return rows
+}
+
+func (m Model) handleHelpKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "?", "esc", "q":
 		m.showHelp = false
@@ -320,17 +407,7 @@ func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleSplashKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "!", "esc", "q":
-		m.showSplash = false
-	default:
-		m.showSplash = false
-	}
-	return m, nil
-}
-
-func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleDetailKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.showDetail = false
@@ -353,104 +430,175 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "o":
 		if m.detailTask.URL != "" {
-			openURL(m.detailTask.URL)
+			return m, openURL(m.detailTask.URL)
 		}
 	case " ":
-		if m.detailTask.URL != "" {
-			copyToClipboard(m.detailTask.URL)
-			m.statusMsg = "copied URL to clipboard"
-			m.showDetail = false
-		}
+		m.copyURL(m.detailTask)
+		m.showDetail = false
 	}
 	return m, nil
 }
 
-func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleFilterKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.filtering = false
 		m.filterQuery = ""
-		m.cursor = 0
-		return m, nil
 	case "enter":
 		m.filtering = false
-		m.cursor = 0
-		return m, nil
 	case "backspace":
-		if len(m.filterQuery) > 0 {
-			m.filterQuery = m.filterQuery[:len(m.filterQuery)-1]
-			m.cursor = 0
-		}
-		return m, nil
+		m.filterQuery = dropLastRune(m.filterQuery)
 	default:
-		r := msg.Runes
-		if len(r) > 0 {
-			m.filterQuery += string(r)
-			m.cursor = 0
-		}
-		return m, nil
+		m.filterQuery += string(msg.Runes)
 	}
+	m.cursor = 0
+	return m, nil
 }
 
+func (m *Model) copyURL(t model.Task) {
+	if t.URL == "" {
+		return
+	}
+	if err := platform.CopyToClipboard(t.URL); err != nil {
+		m.statusMsg = "copy failed: " + err.Error()
+		return
+	}
+	m.statusMsg = "copied URL to clipboard"
+}
+
+// ── Cursor and scrolling ────────────────────────────────────────────────
+
 func (m *Model) clampCursor() {
-	max := m.listLen() - 1
-	if max < 0 {
-		max = 0
+	m.cursor = max(0, min(m.cursor, m.listLen()-1))
+}
+
+// scrollToCursor adjusts the scroll offset so the cursor row is visible.
+func (m *Model) scrollToCursor() {
+	rows := m.visibleRows()
+	if m.cursor < m.offset {
+		m.offset = m.cursor
 	}
-	if m.cursor > max {
-		m.cursor = max
+	if m.cursor >= m.offset+rows {
+		m.offset = m.cursor - rows + 1
 	}
+	m.offset = max(0, min(m.offset, m.listLen()-rows))
+}
+
+// ── Tabs, views and navigation ──────────────────────────────────────────
+
+func (m *Model) switchTab(next tab) tea.Cmd {
+	m.closeView()
+	m.activeTab = next
+	m.cursor = 0
+	m.navStack = nil
+	m.clearFilters()
+	m.saveState()
+	return m.syncScope()
+}
+
+// viewOpen reports whether a configured view's tasks are being shown.
+func (m Model) viewOpen() bool {
+	return m.activeTab == tabViews && m.viewIdx >= 0 && m.viewIdx < len(m.cfg.Views)
+}
+
+// showsTasks reports whether the active tab is showing a task list.
+func (m Model) showsTasks() bool {
+	return m.activeTab != tabViews || m.viewOpen()
+}
+
+func (m *Model) openView(idx int) tea.Cmd {
+	if idx < 0 || idx >= len(m.cfg.Views) {
+		return nil
+	}
+	m.viewIdx = idx
+	m.viewTasks = nil
+	m.cursor = 0
+	if len(m.backends) == 0 {
+		return nil
+	}
+	m.statusMsg = fmt.Sprintf("Loading %s...", m.cfg.Views[idx].Name)
+	return m.startViewLoad()
+}
+
+// closeView returns to the view list, dropping any pending view load.
+func (m *Model) closeView() {
+	if m.viewIdx < 0 {
+		return
+	}
+	m.navStack = nil
+	m.clearFilters()
+	m.cursor = m.viewIdx
+	m.viewIdx = -1
+	m.viewTasks = nil
+	m.viewErr = nil
+	m.viewSeq++
+	m.loadingView = false
+	if m.cancelView != nil {
+		m.cancelView()
+		m.cancelView = nil
+	}
+	m.statusMsg = m.tasksStatus
+}
+
+func (m *Model) popNav() {
+	m.navStack = m.navStack[:len(m.navStack)-1]
+	m.cursor = 0
 }
 
 func (m Model) listLen() int {
-	if m.activeTab == tabViews {
+	if !m.showsTasks() {
 		return len(m.cfg.Views)
 	}
 	return len(m.currentTasks())
 }
 
 func (m Model) taskAtCursor() (model.Task, bool) {
-	if m.activeTab == tabViews {
+	if !m.showsTasks() {
 		return model.Task{}, false
 	}
 	tasks := m.currentTasks()
-	if m.cursor >= len(tasks) {
+	if m.cursor < 0 || m.cursor >= len(tasks) {
 		return model.Task{}, false
 	}
 	return tasks[m.cursor], true
 }
 
-func (m Model) openInBrowser() {
-	if t, ok := m.taskAtCursor(); ok && t.URL != "" {
-		openURL(t.URL)
-	}
-}
-
-// currentTasks returns the task list for the active tab, filtered by the
-// current navigation stack (children of the deepest parent) and any active
-// text/cycle filters.
-func (m Model) currentTasks() []model.Task {
-	if len(m.navStack) > 0 {
-		parent := m.navStack[len(m.navStack)-1]
-		return m.filteredTasks(m.childTasks(parent.ID))
-	}
+// tabTasks returns the unfiltered top-level task list for the active tab.
+func (m Model) tabTasks() []model.Task {
 	switch m.activeTab {
 	case tabMyTasks:
-		return m.filteredTasks(m.myTasks)
+		return m.myTasks
 	case tabTeam:
-		return m.filteredTasks(m.teamTasks)
+		return m.teamTasks
 	case tabDone:
-		return m.filteredTasks(m.doneTasks)
+		return m.doneTasks
+	case tabViews:
+		return m.viewTasks
 	}
 	return nil
 }
 
+// levelTasks returns the unfiltered tasks at a navigation depth: the tab's
+// list at depth 0, otherwise the children of navStack[depth-1].
+func (m Model) levelTasks(depth int) []model.Task {
+	if depth <= 0 {
+		return m.tabTasks()
+	}
+	return m.childTasks(m.navStack[depth-1].ID)
+}
+
+// currentTasks returns the filtered tasks at the current navigation level.
+func (m Model) currentTasks() []model.Task {
+	return m.filteredTasks(m.levelTasks(len(m.navStack)))
+}
+
 // childTasks returns all loaded tasks whose ParentID matches the given ID,
-// deduplicated across all three task lists.
+// deduplicated across the task lists. View results come first because an
+// open view is usually fresher than the task tabs.
 func (m Model) childTasks(parentID string) []model.Task {
 	seen := make(map[string]bool)
 	var children []model.Task
-	for _, list := range [][]model.Task{m.myTasks, m.teamTasks, m.doneTasks} {
+	for _, list := range [][]model.Task{m.viewTasks, m.myTasks, m.teamTasks, m.doneTasks} {
 		for _, t := range list {
 			if t.ParentID == parentID && !seen[t.ID] {
 				seen[t.ID] = true
@@ -461,49 +609,24 @@ func (m Model) childTasks(parentID string) []model.Task {
 	return children
 }
 
-// siblingTasks returns the task list at the same level as the top of the
-// navStack — i.e. the list the current parent was selected from.
-func (m Model) siblingTasks() []model.Task {
-	if len(m.navStack) > 1 {
-		grandparent := m.navStack[len(m.navStack)-2]
-		return m.filteredTasks(m.childTasks(grandparent.ID))
-	}
-	switch m.activeTab {
-	case tabMyTasks:
-		return m.filteredTasks(m.myTasks)
-	case tabTeam:
-		return m.filteredTasks(m.teamTasks)
-	case tabDone:
-		return m.filteredTasks(m.doneTasks)
-	}
-	return nil
-}
-
 // navigateSibling replaces the top of the navStack with the previous or next
 // sibling task (delta = -1 or +1).
 func (m *Model) navigateSibling(delta int) {
-	if len(m.navStack) == 0 {
+	depth := len(m.navStack)
+	if depth == 0 {
 		return
 	}
-	siblings := m.siblingTasks()
-	current := m.navStack[len(m.navStack)-1]
+	siblings := m.filteredTasks(m.levelTasks(depth - 1))
+	current := m.navStack[depth-1]
 
-	idx := -1
 	for i, t := range siblings {
-		if t.ID == current.ID {
-			idx = i
-			break
+		if t.ID != current.ID {
+			continue
 		}
-	}
-	if idx < 0 {
+		if next := i + delta; next >= 0 && next < len(siblings) {
+			m.navStack[depth-1] = siblings[next]
+			m.cursor = 0
+		}
 		return
 	}
-
-	newIdx := idx + delta
-	if newIdx < 0 || newIdx >= len(siblings) {
-		return
-	}
-
-	m.navStack[len(m.navStack)-1] = siblings[newIdx]
-	m.cursor = 0
 }

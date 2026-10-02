@@ -1,12 +1,19 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/alcxyz/canopy/internal/model"
 )
 
 // BackendType identifies which task-tracking system a profile connects to.
@@ -24,7 +31,7 @@ type Filter struct {
 	UpdatedSince string   `yaml:"updated_since"` // relative: "last_week", "last_month", etc.
 	Types        []string `yaml:"types"`         // feature, bug, user-story, task, etc.
 	Status       []string `yaml:"status"`        // done, in-progress, in-review, todo, etc.
-	Sprint       string   `yaml:"sprint"`        // "current", "previous", or sprint name
+	Sprint       string   `yaml:"sprint"`        // "current", "previous", a sprint name, or a full iteration path
 	Assignee     string   `yaml:"assignee"`      // "me", or a team member name/email
 	Labels       []string `yaml:"labels"`
 }
@@ -122,36 +129,154 @@ func BootstrapXDG(example []byte) (string, error) {
 	return p, nil
 }
 
-// Load reads and parses the config file.
-func Load() Config {
-	cfg := Default
-
+// Load reads and parses the config file. Problems (unreadable or invalid
+// YAML, unknown keys, invalid filter values) are returned as messages rather
+// than aborting, so the UI can start and report them.
+func Load() (Config, []string) {
 	data, err := os.ReadFile(ConfigPath())
 	if err != nil {
-		return cfg
+		if errors.Is(err, fs.ErrNotExist) {
+			return Default, nil
+		}
+		return Default, []string{fmt.Sprintf("reading config: %v", err)}
 	}
+	return parse(data)
+}
 
-	_ = yaml.Unmarshal(data, &cfg)
+func parse(data []byte) (Config, []string) {
+	var problems []string
+	cfg := Default
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		// Retry leniently: unknown keys are skipped and fields with the wrong
+		// type are left at their defaults, so one mistake does not discard the
+		// rest of the config. Only syntax errors fall back to defaults.
+		cfg = Default
+		if lerr := yaml.Unmarshal(data, &cfg); lerr != nil {
+			var typeErr *yaml.TypeError
+			if !errors.As(lerr, &typeErr) {
+				return Default, []string{"config: " + oneLine(lerr.Error())}
+			}
+		}
+		problems = append(problems, "config: "+oneLine(err.Error()))
+	}
 
 	if cfg.RefreshSecs <= 0 {
 		cfg.RefreshSecs = Default.RefreshSecs
 	}
+	problems = append(problems, uniqueProfileNames(cfg.Profiles)...)
+	return cfg, append(problems, cfg.Problems()...)
+}
 
-	for i := range cfg.Profiles {
-		if cfg.Profiles[i].Name == "" {
-			cfg.Profiles[i].Name = fmt.Sprintf("profile %d", i+1)
+// uniqueProfileNames fills in missing profile names and renames duplicates,
+// since names identify profiles at runtime. It returns a problem per rename.
+func uniqueProfileNames(profiles []Profile) []string {
+	var problems []string
+	taken := map[string]bool{}
+	for i := range profiles {
+		if profiles[i].Name == "" {
+			profiles[i].Name = fmt.Sprintf("profile %d", i+1)
 		}
+		taken[profiles[i].Name] = true
 	}
 
-	return cfg
+	seen := map[string]bool{}
+	for i := range profiles {
+		p := &profiles[i]
+		if seen[p.Name] {
+			renamed := p.Name
+			for n := 2; taken[renamed]; n++ {
+				renamed = fmt.Sprintf("%s (%d)", p.Name, n)
+			}
+			problems = append(problems, fmt.Sprintf("duplicate profile name %q; using %q", p.Name, renamed))
+			p.Name = renamed
+			taken[renamed] = true
+		}
+		seen[p.Name] = true
+	}
+	return problems
+}
+
+// oneLine collapses a multi-line error message for the status bar.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+var (
+	validTypes = map[string]bool{
+		string(model.TypeFeature): true, string(model.TypeBug): true,
+		string(model.TypeUserStory): true, string(model.TypeTask): true,
+		string(model.TypeEpic): true, string(model.TypeSubtask): true,
+	}
+	validStatuses = map[string]bool{
+		string(model.StateTodo): true, string(model.StateInProgress): true,
+		string(model.StateInReview): true, string(model.StateDone): true,
+		string(model.StateClosed): true,
+	}
+)
+
+// Problems describes view filter values that no backend would understand.
+// Such values are otherwise silently ignored, widening the view.
+func (c Config) Problems() []string {
+	var out []string
+	for _, v := range c.Views {
+		f := v.Filters
+		for _, t := range f.Types {
+			if !validTypes[t] {
+				out = append(out, fmt.Sprintf("view %q: unknown type %q", v.Name, t))
+			}
+		}
+		for _, s := range f.Status {
+			if !validStatuses[s] {
+				out = append(out, fmt.Sprintf("view %q: unknown status %q", v.Name, s))
+			}
+		}
+		if f.UpdatedSince != "" {
+			if _, ok := UpdatedSinceDays(f.UpdatedSince); !ok {
+				out = append(out, fmt.Sprintf("view %q: unknown updated_since %q", v.Name, f.UpdatedSince))
+			}
+		}
+	}
+	return out
+}
+
+// UpdatedSinceDays converts an updated_since value ("today", "last_week",
+// "last_N_days", …) to a number of days back from today.
+func UpdatedSinceDays(s string) (int, bool) {
+	switch s {
+	case "today":
+		return 0, true
+	case "yesterday":
+		return 1, true
+	case "last_week":
+		return 7, true
+	case "last_2_weeks":
+		return 14, true
+	case "last_month":
+		return 30, true
+	case "last_quarter":
+		return 90, true
+	}
+	if mid, ok := strings.CutPrefix(s, "last_"); ok {
+		if mid, ok = strings.CutSuffix(mid, "_days"); ok {
+			if n, err := strconv.Atoi(mid); err == nil && n >= 0 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // CacheKey returns a string derived from profile settings so the cache is
-// automatically invalidated when the user changes org/project/owner.
+// automatically invalidated when the user renames a profile or changes its
+// org/project/owner. Cached tasks record their profile name, so a rename must
+// invalidate them.
 func (c Config) CacheKey() string {
 	var parts []string
 	for _, p := range c.Profiles {
-		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s", p.Backend, p.Org, p.Project, p.Owner))
+		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s|%s", p.Name, p.Backend, p.Org, p.Project, p.Owner))
 	}
 	return strings.Join(parts, ";")
 }

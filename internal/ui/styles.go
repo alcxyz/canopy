@@ -35,6 +35,8 @@ var (
 
 	StatusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(catOverlay2))
 
+	WarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(catYellow))
+
 	CountStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(catBlue))
 
 	TypeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(catText))
