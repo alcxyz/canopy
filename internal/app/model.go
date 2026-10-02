@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/alcxyz/canopy/internal/backend"
@@ -21,6 +23,11 @@ const (
 
 var tabNames = []string{"1 My Tasks", "2 Team", "3 Done", "4 Views"}
 
+// defaultScopeDays is how many days of history (by last change) the task tabs
+// load by default (ADR-003). The f date filter widens it when a bucket reaches
+// further back.
+const defaultScopeDays = 7
+
 // Model is the top-level bubbletea model.
 type Model struct {
 	cfg      config.Config
@@ -31,14 +38,28 @@ type Model struct {
 	teamTasks []model.Task
 	doneTasks []model.Task
 
+	// Views tab: index of the open view (-1 shows the view list) and its tasks.
+	viewIdx   int
+	viewTasks []model.Task
+
+	// Loading. Each request carries a sequence number so that responses from
+	// superseded requests are dropped instead of overwriting newer data.
+	loadingTasks  bool
+	loadingView   bool
+	loadSeq       int
+	viewSeq       int
+	scopeDays     int       // history window the task tabs are loaded with
+	tasksLoadedAt time.Time // when the current task data was fetched
+
 	// UI state
 	activeTab     tab
 	cursor        int
+	offset        int // first visible list row
 	width, height int
 	ready         bool
-	loading       bool
 	err           error
 	statusMsg     string
+	notice        string // persistent configuration or backend problems
 
 	// Vim-style gg navigation
 	prevKey   string
@@ -49,18 +70,13 @@ type Model struct {
 	filtering   bool
 	filterQuery string
 
-	// Cycle quick-filter (f=date, d=assignee, s=type)
+	// Cycle quick-filter (f=date, d=assignee, s=type, t=tag)
 	cycleField  string
 	cycleValues []string
 	cycleIdx    int
 
-	// Date scope: the default time range applied to backend queries.
-	// Overridden by the f cycle filter for client-side filtering.
-	dateScope string // "this week" by default
-
-	// Date field: which timestamp to use for the date cycle filter.
-	dateField    string // current field label, e.g. "updated"
-	dateFieldIdx int    // index into dateFields
+	// Index into dateFields: which timestamp the date filter applies to.
+	dateFieldIdx int
 
 	// Navigation stack for drilling into parent tasks.
 	navStack []model.Task
@@ -70,25 +86,11 @@ type Model struct {
 	showSplash bool
 	showDetail bool
 	detailTask model.Task
-
-	// Create-form overlay
-	showForm           bool
-	formField          int // 0=type, 1=title, 2=description, ...
-	formType           int // index into formTypes
-	formTitle          string
-	formDesc           string
-	formTags           string
-	formStartDate      string
-	formTargetDate     string
-	formAcceptCriteria string
-	formIteration      string // resolved current iteration path
-	formAssignee       string // default assignee display name
-	formErr            string
-	formSubmitting     bool
+	showForm   bool
+	form       createForm
 
 	// Cache
-	cache         *cache.Store
-	tasksLoadedAt time.Time // when the current data was fetched
+	cache *cache.Store
 
 	// Version update check
 	latestVersion string // non-empty when a newer release is available
@@ -103,6 +105,7 @@ type Model struct {
 // Options holds the parameters for creating a new Model.
 type Options struct {
 	Cfg      config.Config
+	Problems []string // configuration problems to surface to the user
 	Version  string
 	LogPath  string
 	CfgPath  string
@@ -116,22 +119,28 @@ type cachedTasks struct {
 
 // New creates a new Model from the loaded config.
 func New(o Options) Model {
+	problems := append([]string(nil), o.Problems...)
 	var backends []backend.Backend
-	var initErrs []string
 	for _, p := range o.Cfg.Profiles {
 		b, err := backend.New(p)
 		if err != nil {
-			initErrs = append(initErrs, err.Error())
+			problems = append(problems, fmt.Sprintf("profile %q: %v", p.Name, err))
 			continue
 		}
 		backends = append(backends, b)
 	}
+	for _, p := range problems {
+		log.Print(p)
+	}
+
 	m := Model{
 		cfg:       o.Cfg,
 		backends:  backends,
+		viewIdx:   -1,
 		cycleIdx:  -1,
 		ggTimeout: 400 * time.Millisecond,
-		dateScope: "this week",
+		scopeDays: defaultScopeDays,
+		notice:    summarize(problems),
 		version:   o.Version,
 		logPath:   o.LogPath,
 		cfgPath:   o.CfgPath,
@@ -140,8 +149,10 @@ func New(o Options) Model {
 	if m.version == "" {
 		m.version = "dev"
 	}
-	if len(initErrs) > 0 && len(backends) == 0 {
-		m.statusMsg = "Backend errors: " + initErrs[0]
+	if len(backends) > 0 {
+		// Init issues the first load with this sequence number.
+		m.loadingTasks = true
+		m.loadSeq = 1
 	}
 
 	// Initialise cache and load last-known data for instant startup.
@@ -152,17 +163,32 @@ func New(o Options) Model {
 		if st.ActiveTab >= int(tabMyTasks) && st.ActiveTab <= int(tabViews) {
 			m.activeTab = tab(st.ActiveTab)
 		}
+	} else {
+		log.Printf("cache: %v", err)
 	}
 
 	return m
+}
+
+// summarize reduces a list of problems to one status line.
+func summarize(problems []string) string {
+	switch len(problems) {
+	case 0:
+		return ""
+	case 1:
+		return problems[0]
+	default:
+		return fmt.Sprintf("%s (+%d more, see log)", problems[0], len(problems)-1)
+	}
 }
 
 // loadCachedTasks restores task lists from the on-disk cache.
 // No TTL is enforced here — stale data is shown immediately and replaced
 // by a background refresh.
 func (m *Model) loadCachedTasks() {
+	var cachedAt time.Time
 	load := func(key string) []model.Task {
-		e, _ := m.cache.Get(key, 0)
+		e := m.cache.Get(key, 0)
 		if e == nil {
 			return nil
 		}
@@ -170,12 +196,14 @@ func (m *Model) loadCachedTasks() {
 		if err := json.Unmarshal(e.Data, &ct); err != nil {
 			return nil
 		}
+		cachedAt = e.CachedAt
 		return ct.Tasks
 	}
 	m.myTasks = load("my_tasks")
 	m.teamTasks = load("team_tasks")
 	m.doneTasks = load("done_tasks")
 	if len(m.myTasks)+len(m.teamTasks)+len(m.doneTasks) > 0 {
+		m.tasksLoadedAt = cachedAt
 		m.statusMsg = "showing cached data…"
 	}
 }
@@ -190,20 +218,21 @@ func (m Model) saveCachedTasks() {
 	team := m.teamTasks
 	done := m.doneTasks
 	go func() {
-		_ = cs.Set("my_tasks", cachedTasks{Tasks: my})
-		_ = cs.Set("team_tasks", cachedTasks{Tasks: team})
-		_ = cs.Set("done_tasks", cachedTasks{Tasks: done})
+		for key, tasks := range map[string][]model.Task{"my_tasks": my, "team_tasks": team, "done_tasks": done} {
+			if err := cs.Set(key, cachedTasks{Tasks: tasks}); err != nil {
+				log.Printf("cache: saving %s: %v", key, err)
+			}
+		}
 	}()
 }
 
-// saveState persists the current UI state (active tab) to disk asynchronously.
+// saveState persists the current UI state (active tab). It is written
+// synchronously so the choice survives an immediate quit.
 func (m Model) saveState() {
 	if m.cache == nil {
 		return
 	}
-	cs := m.cache
-	st := cache.UIState{ActiveTab: int(m.activeTab)}
-	go func() {
-		_ = cs.SaveUIState(st)
-	}()
+	if err := m.cache.SaveUIState(cache.UIState{ActiveTab: int(m.activeTab)}); err != nil {
+		log.Printf("cache: saving UI state: %v", err)
+	}
 }

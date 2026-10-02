@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -34,257 +35,227 @@ const (
 	formFieldCount // sentinel
 )
 
+// formFieldSpecs describes how each form field is labelled and edited.
+var formFieldSpecs = [formFieldCount]struct {
+	label     string
+	multiline bool // enter inserts a newline instead of moving on
+	date      bool // must be empty or YYYY-MM-DD
+}{
+	formFieldType:           {label: "Type"},
+	formFieldTitle:          {label: "Title"},
+	formFieldDesc:           {label: "Description", multiline: true},
+	formFieldTags:           {label: "Tags"},
+	formFieldStartDate:      {label: "Start Date", date: true},
+	formFieldTargetDate:     {label: "End Date", date: true},
+	formFieldAcceptCriteria: {label: "Criteria", multiline: true},
+	formFieldIteration:      {label: "Sprint"},
+	formFieldAssignee:       {label: "Assignee"},
+}
+
+// createForm holds the state of the create-work-item overlay.
+type createForm struct {
+	field      int
+	typeIdx    int // index into formTypes
+	values     [formFieldCount]string
+	err        string
+	submitting bool
+
+	creator backend.TaskCreator // backend the item is created in
+	parent  *model.Task         // parent work item, when created from a drill-down
+}
+
+// dropLastRune removes the final rune, keeping multi-byte characters intact.
+func dropLastRune(s string) string {
+	_, size := utf8.DecodeLastRuneInString(s)
+	return s[:len(s)-size]
+}
+
 // ── Form key handling ──────────────────────────────────────────────────
 
-func (m Model) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.formSubmitting {
+func (m Model) handleFormKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	f := &m.form
+	if f.submitting {
 		return m, nil // ignore input while submitting
 	}
 
 	key := msg.String()
-
 	switch key {
 	case "esc":
 		m.showForm = false
 		return m, nil
-
 	case "ctrl+s":
-		// Validate and submit.
-		if strings.TrimSpace(m.formTitle) == "" {
-			m.formErr = "title is required"
+		if err := f.validate(); err != "" {
+			f.err = err
 			return m, nil
 		}
-		if m.formStartDate != "" {
-			if _, err := time.Parse("2006-01-02", m.formStartDate); err != nil {
-				m.formErr = "start date must be YYYY-MM-DD"
-				return m, nil
-			}
-		}
-		if m.formTargetDate != "" {
-			if _, err := time.Parse("2006-01-02", m.formTargetDate); err != nil {
-				m.formErr = "end date must be YYYY-MM-DD"
-				return m, nil
-			}
-		}
-		m.formErr = ""
-		m.formSubmitting = true
-		return m, m.createTask()
-
+		f.err = ""
+		f.submitting = true
+		return m, createTask(*f)
 	case "tab":
-		m.formField = (m.formField + 1) % formFieldCount
+		f.field = (f.field + 1) % formFieldCount
 		return m, nil
-
 	case "shift+tab":
-		m.formField = (m.formField - 1 + formFieldCount) % formFieldCount
+		f.field = (f.field - 1 + formFieldCount) % formFieldCount
 		return m, nil
 	}
 
-	// Field-specific handling.
-	switch m.formField {
-	case formFieldType:
+	if f.field == formFieldType {
 		switch key {
 		case "left", "h":
-			m.formType = (m.formType - 1 + len(formTypes)) % len(formTypes)
+			f.typeIdx = (f.typeIdx - 1 + len(formTypes)) % len(formTypes)
 		case "right", "l":
-			m.formType = (m.formType + 1) % len(formTypes)
+			f.typeIdx = (f.typeIdx + 1) % len(formTypes)
 		}
-
-	case formFieldTitle:
-		switch key {
-		case "backspace":
-			if len(m.formTitle) > 0 {
-				m.formTitle = m.formTitle[:len(m.formTitle)-1]
-			}
-		case "enter":
-			m.formField = formFieldDesc
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formTitle += string(r)
-			}
-		}
-
-	case formFieldDesc:
-		switch key {
-		case "backspace":
-			if len(m.formDesc) > 0 {
-				m.formDesc = m.formDesc[:len(m.formDesc)-1]
-			}
-		case "enter":
-			m.formDesc += "\n"
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formDesc += string(r)
-			}
-		}
-
-	case formFieldTags:
-		switch key {
-		case "backspace":
-			if len(m.formTags) > 0 {
-				m.formTags = m.formTags[:len(m.formTags)-1]
-			}
-		case "enter":
-			m.formField = formFieldStartDate
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formTags += string(r)
-			}
-		}
-
-	case formFieldStartDate:
-		switch key {
-		case "backspace":
-			if len(m.formStartDate) > 0 {
-				m.formStartDate = m.formStartDate[:len(m.formStartDate)-1]
-			}
-		case "enter":
-			m.formField = formFieldTargetDate
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formStartDate += string(r)
-			}
-		}
-
-	case formFieldTargetDate:
-		switch key {
-		case "backspace":
-			if len(m.formTargetDate) > 0 {
-				m.formTargetDate = m.formTargetDate[:len(m.formTargetDate)-1]
-			}
-		case "enter":
-			m.formField = formFieldAcceptCriteria
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formTargetDate += string(r)
-			}
-		}
-
-	case formFieldAcceptCriteria:
-		switch key {
-		case "backspace":
-			if len(m.formAcceptCriteria) > 0 {
-				m.formAcceptCriteria = m.formAcceptCriteria[:len(m.formAcceptCriteria)-1]
-			}
-		case "enter":
-			m.formAcceptCriteria += "\n"
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formAcceptCriteria += string(r)
-			}
-		}
-
-	case formFieldIteration:
-		switch key {
-		case "backspace":
-			if len(m.formIteration) > 0 {
-				m.formIteration = m.formIteration[:len(m.formIteration)-1]
-			}
-		case "enter":
-			m.formField = formFieldAssignee
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formIteration += string(r)
-			}
-		}
-
-	case formFieldAssignee:
-		switch key {
-		case "backspace":
-			if len(m.formAssignee) > 0 {
-				m.formAssignee = m.formAssignee[:len(m.formAssignee)-1]
-			}
-		case "enter":
-			m.formField = formFieldCount - 1 // stay on last field
-		default:
-			if r := msg.Runes; len(r) > 0 {
-				m.formAssignee += string(r)
-			}
-		}
+		return m, nil
 	}
 
+	value := &f.values[f.field]
+	switch key {
+	case "backspace":
+		*value = dropLastRune(*value)
+	case "enter":
+		if formFieldSpecs[f.field].multiline {
+			*value += "\n"
+		} else if f.field < formFieldCount-1 {
+			f.field++
+		}
+	default:
+		*value += string(msg.Runes)
+	}
 	return m, nil
 }
 
+// validate returns a message describing the first invalid field, or "".
+func (f createForm) validate() string {
+	if strings.TrimSpace(f.values[formFieldTitle]) == "" {
+		return "title is required"
+	}
+	for i, spec := range formFieldSpecs {
+		if !spec.date || f.values[i] == "" {
+			continue
+		}
+		if _, err := time.Parse(time.DateOnly, f.values[i]); err != nil {
+			return strings.ToLower(spec.label) + " must be YYYY-MM-DD"
+		}
+	}
+	return ""
+}
+
+// openCreateForm opens the create overlay. Items created while drilled into
+// a task become its children and are created in that task's profile.
 func (m *Model) openCreateForm() tea.Cmd {
+	var parent *model.Task
+	if n := len(m.navStack); n > 0 {
+		p := m.navStack[n-1]
+		parent = &p
+	}
+
+	creator, profile := m.creatorFor(parent)
+	if creator == nil {
+		if parent != nil {
+			m.statusMsg = fmt.Sprintf("profile %q cannot create work items", parent.Profile)
+		} else {
+			m.statusMsg = "no configured backend can create work items"
+		}
+		return nil
+	}
+
+	m.form = createForm{
+		field:   formFieldTitle,
+		typeIdx: defaultFormTypeIndex(parent),
+		creator: creator,
+		parent:  parent,
+	}
+	m.form.values[formFieldAssignee] = m.defaultAssignee(profile)
 	m.showForm = true
-	m.formField = formFieldTitle
-	m.formTitle = ""
-	m.formDesc = ""
-	m.formTags = ""
-	m.formStartDate = ""
-	m.formTargetDate = ""
-	m.formAcceptCriteria = ""
-	m.formErr = ""
-	m.formSubmitting = false
-	m.formType = m.defaultFormTypeIndex()
-	m.formAssignee = m.defaultAssignee()
-	m.formIteration = ""
-	return m.resolveIteration()
+	return resolveIteration(creator)
+}
+
+// creatorFor returns the backend that should create a child of parent (or a
+// top-level item when parent is nil) and its profile name.
+func (m Model) creatorFor(parent *model.Task) (backend.TaskCreator, string) {
+	for _, b := range m.backends {
+		creator, ok := b.(backend.TaskCreator)
+		if !ok || (parent != nil && b.Name() != parent.Profile) {
+			continue
+		}
+		return creator, b.Name()
+	}
+	return nil, ""
+}
+
+// defaultAssignee returns the first team member of the named profile.
+func (m Model) defaultAssignee(profile string) string {
+	for _, p := range m.cfg.Profiles {
+		if p.Name == profile && len(p.Team) > 0 {
+			return p.Team[0]
+		}
+	}
+	return ""
+}
+
+func defaultFormTypeIndex(parent *model.Task) int {
+	if parent == nil {
+		return 0 // Feature
+	}
+	child := map[model.TaskType]model.TaskType{
+		model.TypeEpic:      model.TypeFeature,
+		model.TypeFeature:   model.TypeUserStory,
+		model.TypeUserStory: model.TypeTask,
+	}[parent.Type]
+	for i, t := range formTypes {
+		if t == child {
+			return i
+		}
+	}
+	return 0
 }
 
 // ── Form rendering ─────────────────────────────────────────────────────
 
 func (m Model) renderForm() string {
+	f := m.form
 	w := min(72, m.width-4)
 	fieldW := w - 20 // label takes ~18 chars + padding
 
 	var b strings.Builder
 	b.WriteString(ui.TitleStyle.Render("  Create work item") + "\n\n")
 
-	// Type selector
-	typeLabel := string(formTypes[m.formType])
-	if m.formField == formFieldType {
-		typeLabel = "< " + typeLabel + " >"
+	for i, spec := range formFieldSpecs {
+		switch i {
+		case formFieldTags:
+			b.WriteString("\n" + ui.DimStyle.Render("  -- Delivery plan --") + "\n")
+		case formFieldIteration:
+			b.WriteString("\n")
+		}
+
+		var value string
+		switch {
+		case i == formFieldType:
+			value = string(formTypes[f.typeIdx])
+			if f.field == i {
+				value = "< " + value + " >"
+			}
+		case spec.date && f.values[i] == "" && f.field != i:
+			value = ui.DimStyle.Render("YYYY-MM-DD")
+		default:
+			value = f.textInput(i, fieldW)
+		}
+		b.WriteString(f.row(spec.label, value, f.field == i))
 	}
-	b.WriteString(m.formRow("Type", typeLabel, formFieldType))
-
-	// Title
-	b.WriteString(m.formRow("Title", m.formTextInput(m.formTitle, fieldW, formFieldTitle), formFieldTitle))
-
-	// Description (show up to 3 visible lines)
-	descDisplay := m.formTextInput(m.formDesc, fieldW, formFieldDesc)
-	b.WriteString(m.formRow("Description", descDisplay, formFieldDesc))
-
-	b.WriteString("\n")
-	b.WriteString(ui.DimStyle.Render("  -- Delivery plan --") + "\n")
-
-	// Tags
-	b.WriteString(m.formRow("Tags", m.formTextInput(m.formTags, fieldW, formFieldTags), formFieldTags))
-
-	// Start Date
-	b.WriteString(m.formRow("Start Date", m.formDateInput(m.formStartDate, fieldW, formFieldStartDate), formFieldStartDate))
-
-	// End Date
-	b.WriteString(m.formRow("End Date", m.formDateInput(m.formTargetDate, fieldW, formFieldTargetDate), formFieldTargetDate))
-
-	// Acceptance Criteria
-	b.WriteString(m.formRow("Criteria", m.formTextInput(m.formAcceptCriteria, fieldW, formFieldAcceptCriteria), formFieldAcceptCriteria))
-
-	b.WriteString("\n")
-
-	// Sprint (editable)
-	b.WriteString(m.formRow("Sprint", m.formTextInput(m.formIteration, fieldW, formFieldIteration), formFieldIteration))
-
-	// Assignee (editable)
-	b.WriteString(m.formRow("Assignee", m.formTextInput(m.formAssignee, fieldW, formFieldAssignee), formFieldAssignee))
 
 	// Parent (read-only)
 	parentLabel := ui.DimStyle.Render("none")
-	if pid := m.formParentID(); pid != "" {
-		pt := m.formParentTitle()
-		parentLabel = ui.DimStyle.Render(fmt.Sprintf("#%s %s", pid, pt))
+	if f.parent != nil {
+		parentLabel = ui.DimStyle.Render(fmt.Sprintf("#%s %s", f.parent.ID, truncate(f.parent.Title, 40)))
 	}
-	b.WriteString(m.infoRow("Parent", parentLabel))
+	b.WriteString(f.row("Parent", parentLabel, false))
 
-	// Error
-	if m.formErr != "" {
-		b.WriteString("\n")
-		b.WriteString(ui.OverdueStyle.Render("  " + m.formErr))
+	if f.err != "" {
+		b.WriteString("\n" + ui.OverdueStyle.Render("  "+f.err))
 	}
-
-	if m.formSubmitting {
-		b.WriteString("\n")
-		b.WriteString(ui.StatusStyle.Render("  submitting..."))
+	if f.submitting {
+		b.WriteString("\n" + ui.StatusStyle.Render("  submitting..."))
 	}
 
 	b.WriteString("\n\n")
@@ -294,99 +265,29 @@ func (m Model) renderForm() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
-func (m Model) formRow(label, value string, field int) string {
-	l := ui.DimStyle.Render(fmt.Sprintf("  %-14s ", label))
-	if m.formField == field {
-		l = ui.FilterStyle.Render(fmt.Sprintf("  %-14s ", label))
+func (f createForm) row(label, value string, focused bool) string {
+	style := ui.DimStyle
+	if focused {
+		style = ui.FilterStyle
 	}
-	return l + value + "\n"
+	return style.Render(fmt.Sprintf("  %-14s ", label)) + value + "\n"
 }
 
-func (m Model) infoRow(label, value string) string {
-	return ui.DimStyle.Render(fmt.Sprintf("  %-14s ", label)) + value + "\n"
-}
-
-func (m Model) formTextInput(text string, width, field int) string {
-	// Show last visible line only for simplicity.
-	display := text
-	if lines := strings.Split(text, "\n"); len(lines) > 1 {
-		display = lines[len(lines)-1]
+// textInput renders the last line of a field's value, scrolled to fit width.
+func (f createForm) textInput(field, width int) string {
+	text := f.values[field]
+	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+		text = text[i+1:]
 	}
-	if len([]rune(display)) > width {
-		display = string([]rune(display)[len([]rune(display))-width:])
+	if r := []rune(text); len(r) > width {
+		text = string(r[len(r)-width:])
 	}
 
-	if m.formField == field {
-		return display + ui.FilterStyle.Render("█")
+	if f.field == field {
+		return text + ui.FilterStyle.Render("█")
 	}
-	if display == "" {
+	if text == "" {
 		return ui.DimStyle.Render("—")
 	}
-	return display
-}
-
-func (m Model) formDateInput(text string, width, field int) string {
-	if text == "" && m.formField != field {
-		return ui.DimStyle.Render("YYYY-MM-DD")
-	}
-	return m.formTextInput(text, width, field)
-}
-
-// ── Form helpers ───────────────────────────────────────────────────────
-
-func (m Model) formParentID() string {
-	if len(m.navStack) > 0 {
-		return m.navStack[len(m.navStack)-1].ID
-	}
-	return ""
-}
-
-func (m Model) formParentTitle() string {
-	if len(m.navStack) > 0 {
-		return truncate(m.navStack[len(m.navStack)-1].Title, 40)
-	}
-	return ""
-}
-
-func (m Model) defaultFormTypeIndex() int {
-	if len(m.navStack) > 0 {
-		parent := m.navStack[len(m.navStack)-1]
-		switch parent.Type {
-		case model.TypeEpic:
-			return indexOf(formTypes, model.TypeFeature)
-		case model.TypeFeature:
-			return indexOf(formTypes, model.TypeUserStory)
-		case model.TypeUserStory:
-			return indexOf(formTypes, model.TypeTask)
-		}
-	}
-	return 0 // Feature
-}
-
-func (m Model) defaultAssignee() string {
-	for _, p := range m.cfg.Profiles {
-		if len(p.Team) > 0 {
-			return p.Team[0]
-		}
-	}
-	return ""
-}
-
-// canCreate returns true if any backend supports creating work items.
-func (m Model) canCreate() bool {
-	for _, b := range m.backends {
-		if _, ok := b.(backend.TaskCreator); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func indexOf(types []model.TaskType, t model.TaskType) int {
-	for i, tt := range types {
-		if tt == t {
-			return i
-		}
-	}
-	return 0
+	return text
 }

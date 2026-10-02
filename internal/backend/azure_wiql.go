@@ -2,7 +2,6 @@ package backend
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/alcxyz/canopy/internal/config"
@@ -119,7 +118,7 @@ func buildWIQL(filter config.Filter, project string, team []string, iterPath str
 
 	// Updated since
 	if filter.UpdatedSince != "" {
-		if days, ok := updatedSinceDays(filter.UpdatedSince); ok {
+		if days, ok := config.UpdatedSinceDays(filter.UpdatedSince); ok {
 			clauses = append(clauses,
 				fmt.Sprintf("[System.ChangedDate] >= @today - %d", days))
 		}
@@ -159,32 +158,6 @@ func buildWIQL(filter config.Filter, project string, team []string, iterPath str
 	}
 
 	return "SELECT [System.Id] FROM WorkItems" + where + " ORDER BY [System.ChangedDate] DESC"
-}
-
-func updatedSinceDays(s string) (int, bool) {
-	switch s {
-	case "today":
-		return 0, true
-	case "yesterday":
-		return 1, true
-	case "last_week":
-		return 7, true
-	case "last_2_weeks":
-		return 14, true
-	case "last_month":
-		return 30, true
-	case "last_quarter":
-		return 90, true
-	default:
-		// Support "last_N_days" dynamic format.
-		if strings.HasPrefix(s, "last_") && strings.HasSuffix(s, "_days") {
-			mid := s[len("last_") : len(s)-len("_days")]
-			if n, err := strconv.Atoi(mid); err == nil {
-				return n, true
-			}
-		}
-		return 0, false
-	}
 }
 
 func quote(s string) string {

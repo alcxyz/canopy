@@ -2,41 +2,58 @@
 package platform
 
 import (
+	"errors"
 	"os/exec"
 	"runtime"
 	"strings"
 )
 
 // OpenURL opens url with the operating system's default browser.
-func OpenURL(url string) {
+func OpenURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
 		cmd = exec.Command("open", url)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	_ = cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap the opener once it exits so it does not linger as a zombie.
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
-// CopyToClipboard writes s to the operating system clipboard when a supported
-// clipboard command is available.
-func CopyToClipboard(s string) {
-	var cmd *exec.Cmd
+// clipboardCommands lists the clipboard writers tried on Linux and BSD, in order.
+var clipboardCommands = [][]string{
+	{"wl-copy"},
+	{"xclip", "-selection", "clipboard"},
+	{"xsel", "--clipboard", "--input"},
+}
+
+// CopyToClipboard writes s to the operating system clipboard.
+func CopyToClipboard(s string) error {
+	var args []string
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("pbcopy")
+		args = []string{"pbcopy"}
 	case "windows":
-		cmd = exec.Command("clip")
+		args = []string{"clip"}
 	default:
-		if _, err := exec.LookPath("wl-copy"); err == nil {
-			cmd = exec.Command("wl-copy")
-		} else {
-			cmd = exec.Command("xclip", "-selection", "clipboard")
+		for _, c := range clipboardCommands {
+			if _, err := exec.LookPath(c[0]); err == nil {
+				args = c
+				break
+			}
 		}
 	}
+	if args == nil {
+		return errors.New("no clipboard tool found (install wl-clipboard, xclip or xsel)")
+	}
+	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(s)
-	_ = cmd.Run()
+	return cmd.Run()
 }

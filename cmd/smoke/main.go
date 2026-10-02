@@ -13,7 +13,10 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, problems := config.Load()
+	for _, p := range problems {
+		fmt.Fprintln(os.Stderr, "config:", p)
+	}
 	if len(cfg.Profiles) == 0 {
 		fmt.Fprintln(os.Stderr, "no profiles configured")
 		os.Exit(1)

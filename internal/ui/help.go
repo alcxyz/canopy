@@ -7,13 +7,14 @@ func RenderHelp(width, height int) string {
 	help := `Navigation:
   j / k                    move down / up
   gg / G                   first / last item
+  ctrl+d / ctrl+u          half page down / up (pgdn / pgup: full page)
   h / l                    previous / next tab
   1–4                      switch to tab directly
 
 Filters:
   /                        text search · esc clear
-  f                        cycle date (today → yesterday → week → month → quarter → 6mo)
-  F                        cycle date field (updated → created → start → target → closed)
+  f                        cycle date (today → … → prior 6 months; loads older data as needed)
+  F                        cycle date field (updated → created → start → target → closed → state changed)
   d                        cycle by assignee
   s                        cycle by type (feature, bug, user-story…)
   t                        cycle by tag / label
@@ -21,8 +22,8 @@ Filters:
 
 Actions:
   c                        create work item
-  enter                    navigate into task (show subtasks) · select view
-  esc / backspace          navigate back · clear filters
+  enter                    navigate into task (show subtasks) · open view
+  esc / backspace          navigate back · leave view · esc also clears filters
   [ / ]                    prev / next sibling task
   i                        task detail overlay
   space                    copy task URL to clipboard
