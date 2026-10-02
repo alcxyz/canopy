@@ -41,5 +41,7 @@ six to nine times per refresh, making refreshes slow. Canopy now keeps the
 token in process memory and reuses it until five minutes before the expiry az
 reports (or for five minutes when no expiry is reported). The token is never
 persisted, and az remains the only credential source. A token Azure rejects
-with HTTP 401 is dropped so the next request asks az again, and a failed az
+with HTTP 401 is dropped (unless az issued it within the last minute, which
+points at missing access rather than a stale token) so the next request asks
+az again, and a failed az
 call is reused for a few seconds so concurrent requests do not each run az.

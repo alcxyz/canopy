@@ -382,3 +382,12 @@ func TestTruncatedResultsAreKeptAndReported(t *testing.T) {
 		t.Errorf("status should mention the cap: %q", m.statusMsg)
 	}
 }
+
+func TestPartialFailureDoesNotReplaceEmptyListMessage(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"}, &fakeBackend{name: "Stub", err: errors.New("not yet implemented")})
+	cmd := m.startLoad()
+	m = send(m, cmd())
+	if out := m.View(); !strings.Contains(out, "No tasks found") || !strings.Contains(m.statusMsg, "Stub") {
+		t.Errorf("status = %q, view:\n%s", m.statusMsg, out)
+	}
+}

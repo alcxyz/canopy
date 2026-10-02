@@ -138,7 +138,7 @@ func (m Model) applyTasks(msg tasksLoadedMsg) Model {
 		m.doneTasks = keepFailedProfiles(m.doneTasks, msg.doneTasks, failed)
 		m.tasksLoadedAt = time.Now()
 		m.saveCachedTasks()
-		m.err = firstFailure(msg.failures)
+		m.err = nil // partial failures are reported in the status bar
 		status = fmt.Sprintf("%d my · %d team · %d done",
 			len(m.myTasks), len(m.teamTasks), len(m.doneTasks)) + loadNotes(msg.truncated, msg.failures)
 	}
@@ -162,7 +162,7 @@ func (m Model) applyView(msg viewLoadedMsg) Model {
 		return m
 	}
 	m.viewTasks = keepFailedProfiles(m.viewTasks, msg.tasks, failedProfiles(msg.failures))
-	m.viewErr = firstFailure(msg.failures)
+	m.viewErr = nil
 	m.statusMsg = fmt.Sprintf("%s: %d tasks", m.cfg.Views[m.viewIdx].Name, len(m.viewTasks)) +
 		loadNotes(msg.truncated, msg.failures)
 	return m
@@ -178,13 +178,6 @@ func failedProfiles(failures []profileFailure) map[string]bool {
 		failed[f.profile] = true
 	}
 	return failed
-}
-
-func firstFailure(failures []profileFailure) error {
-	if len(failures) == 0 {
-		return nil
-	}
-	return failures[0].err
 }
 
 // loadNotes describes capped results and failed profiles for the status bar.

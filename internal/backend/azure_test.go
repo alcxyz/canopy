@@ -274,11 +274,14 @@ func TestTokenCache(t *testing.T) {
 		t.Errorf("cached token not reused: %q after %d calls", again, calls)
 	}
 
-	// Invalidating the cached token forces a refetch; stale tokens are ignored.
+	// Invalidating the cached token forces a refetch once it is old enough;
+	// other tokens and fresh rejections are ignored.
 	c.Invalidate("other")
+	c.Invalidate(tok)
 	if again, _ := c.Token(ctx); again != tok {
-		t.Error("invalidating a different token should keep the cache")
+		t.Error("invalidating a different or fresh token should keep the cache")
 	}
+	c.fetchedAt = time.Now().Add(-azTokenMinAge)
 	c.Invalidate(tok)
 	if again, _ := c.Token(ctx); again != "tok-3" {
 		t.Errorf("token after invalidate = %q", again)

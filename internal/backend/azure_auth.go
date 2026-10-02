@@ -22,6 +22,12 @@ const azTokenMargin = 5 * time.Minute
 // azTokenFallbackTTL bounds reuse when az does not report an expiry.
 const azTokenFallbackTTL = 5 * time.Minute
 
+// azTokenMinAge is how long a token is kept even if Azure rejects it. A token
+// rejected straight after az issued it points at access to the organisation
+// (for example a profile for an org the account cannot use), not a stale
+// token, and dropping it would make every request run az again.
+const azTokenMinAge = time.Minute
+
 // azTokenRetryDelay is how long a failed az call is reported to concurrent
 // and subsequent requests before az is tried again.
 const azTokenRetryDelay = 5 * time.Second
@@ -39,11 +45,12 @@ type tokenSource interface {
 type azTokenCache struct {
 	fetch func(context.Context) (string, time.Time, error)
 
-	mu       sync.Mutex
-	token    string
-	expires  time.Time
-	err      error // last fetch failure, reused until errUntil
-	errUntil time.Time
+	mu        sync.Mutex
+	token     string
+	fetchedAt time.Time
+	expires   time.Time
+	err       error // last fetch failure, reused until errUntil
+	errUntil  time.Time
 }
 
 var azTokens = &azTokenCache{fetch: fetchAzToken}
@@ -65,21 +72,22 @@ func (c *azTokenCache) Token(ctx context.Context) (string, error) {
 	token, expires, err := c.fetch(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			c.err, c.errUntil = err, now.Add(azTokenRetryDelay)
+			// Time the retry window from when az finished, not when it started.
+			c.err, c.errUntil = err, time.Now().Add(azTokenRetryDelay)
 		}
 		return "", err
 	}
-	c.token, c.expires = token, cacheUntil(expires, now)
+	c.token, c.fetchedAt, c.expires = token, now, cacheUntil(expires, now)
 	c.err = nil
 	return token, nil
 }
 
-// Invalidate drops token if it is still the cached one, so the next request
-// asks az again.
+// Invalidate drops token if it is still the cached one and older than
+// azTokenMinAge, so the next request asks az again.
 func (c *azTokenCache) Invalidate(token string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.token == token {
+	if c.token == token && time.Since(c.fetchedAt) >= azTokenMinAge {
 		c.token = ""
 		c.expires = time.Time{}
 	}
