@@ -148,7 +148,7 @@ func (m Model) infoBarText() string {
 	}
 
 	if m.activeTab != tabViews {
-		scope := "last " + pluralDays(m.scopeDays)
+		scope := "last " + pluralDays(m.loadedDays)
 		if m.dateField() != "updated" {
 			scope += " · dates: " + m.dateField()
 		}

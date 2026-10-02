@@ -49,7 +49,9 @@ type Model struct {
 	loadingView   bool
 	loadSeq       int
 	viewSeq       int
-	scopeDays     int       // history window the task tabs are loaded with
+	scopeDays     int       // history window requested for the task tabs
+	loadedDays    int       // history window of the task data currently held
+	tasksStatus   string    // status of the last task load, restored when leaving a view
 	tasksLoadedAt time.Time // when the current task data was fetched
 
 	// UI state
@@ -136,17 +138,18 @@ func New(o Options) Model {
 	}
 
 	m := Model{
-		cfg:       o.Cfg,
-		backends:  backends,
-		viewIdx:   -1,
-		cycleIdx:  -1,
-		ggTimeout: 400 * time.Millisecond,
-		scopeDays: defaultScopeDays,
-		notice:    summarize(problems),
-		version:   o.Version,
-		logPath:   o.LogPath,
-		cfgPath:   o.CfgPath,
-		cacheDir:  o.CacheDir,
+		cfg:        o.Cfg,
+		backends:   backends,
+		viewIdx:    -1,
+		cycleIdx:   -1,
+		ggTimeout:  400 * time.Millisecond,
+		scopeDays:  defaultScopeDays,
+		loadedDays: defaultScopeDays,
+		notice:     summarize(problems),
+		version:    o.Version,
+		logPath:    o.LogPath,
+		cfgPath:    o.CfgPath,
+		cacheDir:   o.CacheDir,
 	}
 	if m.version == "" {
 		m.version = "dev"

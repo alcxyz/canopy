@@ -137,11 +137,13 @@ func (m Model) applyTasks(msg tasksLoadedMsg) Model {
 		m.teamTasks = keepFailedProfiles(m.teamTasks, msg.teamTasks, failed)
 		m.doneTasks = keepFailedProfiles(m.doneTasks, msg.doneTasks, failed)
 		m.tasksLoadedAt = time.Now()
+		m.loadedDays = msg.days
 		m.saveCachedTasks()
 		m.err = nil // partial failures are reported in the status bar
 		status = fmt.Sprintf("%d my · %d team · %d done",
 			len(m.myTasks), len(m.teamTasks), len(m.doneTasks)) + loadNotes(msg.truncated, msg.failures)
 	}
+	m.tasksStatus = status
 	if !m.viewOpen() {
 		m.statusMsg = status
 	}
@@ -521,6 +523,7 @@ func (m *Model) closeView() {
 	m.viewErr = nil
 	m.viewSeq++
 	m.loadingView = false
+	m.statusMsg = m.tasksStatus
 }
 
 func (m *Model) popNav() {

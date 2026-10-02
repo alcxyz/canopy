@@ -32,6 +32,7 @@ type profileFailure struct {
 
 type tasksLoadedMsg struct {
 	seq       int
+	days      int // history window the load covered
 	myTasks   []model.Task
 	teamTasks []model.Task
 	doneTasks []model.Task
@@ -108,7 +109,7 @@ func loadTasks(backends []backend.Backend, seq, days int) tea.Cmd {
 			{Status: doneTaskStates, UpdatedSince: since},
 		})
 
-		msg := tasksLoadedMsg{seq: seq}
+		msg := tasksLoadedMsg{seq: seq, days: days}
 		for i, r := range results {
 			if r.err != nil {
 				msg.failures = append(msg.failures, profileFailure{backends[i].Name(), r.err})

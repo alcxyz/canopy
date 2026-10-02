@@ -41,16 +41,17 @@ func (f *fakeBackend) CreateTask(context.Context, backend.CreateTaskParams) (bac
 
 func newTestModel(backends ...backend.Backend) Model {
 	return Model{
-		cfg:       config.Config{RefreshSecs: 300, Views: []config.View{{Name: "Standup"}, {Name: "Review"}}},
-		backends:  backends,
-		viewIdx:   -1,
-		cycleIdx:  -1,
-		scopeDays: defaultScopeDays,
-		ggTimeout: 400 * time.Millisecond,
-		version:   "dev",
-		width:     160,
-		height:    40,
-		ready:     true,
+		cfg:        config.Config{RefreshSecs: 300, Views: []config.View{{Name: "Standup"}, {Name: "Review"}}},
+		backends:   backends,
+		viewIdx:    -1,
+		cycleIdx:   -1,
+		scopeDays:  defaultScopeDays,
+		loadedDays: defaultScopeDays,
+		ggTimeout:  400 * time.Millisecond,
+		version:    "dev",
+		width:      160,
+		height:     40,
+		ready:      true,
 	}
 }
 
@@ -389,5 +390,33 @@ func TestPartialFailureDoesNotReplaceEmptyListMessage(t *testing.T) {
 	m = send(m, cmd())
 	if out := m.View(); !strings.Contains(out, "No tasks found") || !strings.Contains(m.statusMsg, "Stub") {
 		t.Errorf("status = %q, view:\n%s", m.statusMsg, out)
+	}
+}
+
+func TestClosingViewRestoresTaskStatus(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A", tasks: tasks("A", 1)})
+	cmd := m.startLoad()
+	m = send(m, cmd())
+	taskStatus := m.statusMsg
+
+	m.activeTab = tabViews
+	m.viewIdx = 0
+	m.viewSeq = 1
+	m = send(m, viewLoadedMsg{seq: 1, failures: []profileFailure{{"A", errors.New("no current sprint")}}})
+	m, _ = press(t, m, "esc")
+	if m.statusMsg != taskStatus {
+		t.Errorf("status after leaving view = %q, want %q", m.statusMsg, taskStatus)
+	}
+}
+
+func TestInfoBarShowsLoadedScope(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"})
+	m.scopeDays = 93 // requested, not loaded yet
+	if strings.Contains(m.infoBarText(), "93 days") {
+		t.Error("info bar should show the loaded window until the load completes")
+	}
+	m = send(m, tasksLoadedMsg{seq: m.loadSeq, days: 93})
+	if !strings.Contains(m.infoBarText(), "last 93 days") {
+		t.Errorf("info bar = %q", m.infoBarText())
 	}
 }
