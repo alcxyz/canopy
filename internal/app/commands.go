@@ -60,6 +60,9 @@ type iterationResolvedMsg struct {
 
 type openResultMsg struct{ err error }
 
+// refreshMsg asks Update to start a task load (used for the first load).
+type refreshMsg struct{}
+
 type tickMsg time.Time
 type ggTimeoutMsg struct{}
 type versionCheckMsg struct{ latest string }

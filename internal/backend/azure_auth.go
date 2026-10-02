@@ -51,35 +51,61 @@ type azTokenCache struct {
 	expires   time.Time
 	err       error // last fetch failure, reused until errUntil
 	errUntil  time.Time
+	inflight  chan struct{} // closed when the running az call finishes
 }
 
 var azTokens = &azTokenCache{fetch: fetchAzToken}
 
 // Token returns a cached token, or fetches a new one from the az CLI when the
-// cached token is missing or close to expiry. A failed fetch is remembered
-// briefly so that a refresh's concurrent requests do not each run az in turn.
+// cached token is missing or close to expiry. Only one az call runs at a
+// time; other callers wait for it but give up when their own context ends.
+// A failed fetch is remembered briefly so that a refresh's concurrent requests
+// do not each run az in turn.
 func (c *azTokenCache) Token(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
-	if c.token != "" && now.Before(c.expires) {
-		return c.token, nil
-	}
-	if c.err != nil && now.Before(c.errUntil) {
-		return "", c.err
-	}
-	token, expires, err := c.fetch(ctx)
-	if err != nil {
-		if ctx.Err() == nil {
-			// Time the retry window from when az finished, not when it started.
-			c.err, c.errUntil = err, time.Now().Add(azTokenRetryDelay)
+	for {
+		c.mu.Lock()
+		now := time.Now()
+		if c.token != "" && now.Before(c.expires) {
+			token := c.token
+			c.mu.Unlock()
+			return token, nil
 		}
-		return "", err
+		if c.err != nil && now.Before(c.errUntil) {
+			err := c.err
+			c.mu.Unlock()
+			return "", err
+		}
+		if wait := c.inflight; wait != nil {
+			c.mu.Unlock()
+			select {
+			case <-wait:
+				continue // re-check the result of that call
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		done := make(chan struct{})
+		c.inflight = done
+		c.mu.Unlock()
+
+		token, expires, err := c.fetch(ctx)
+
+		c.mu.Lock()
+		c.inflight = nil
+		close(done)
+		if err != nil {
+			if ctx.Err() == nil {
+				// Time the retry window from when az finished, not when it started.
+				c.err, c.errUntil = err, time.Now().Add(azTokenRetryDelay)
+			}
+			c.mu.Unlock()
+			return "", err
+		}
+		c.token, c.fetchedAt, c.expires = token, now, cacheUntil(expires, now)
+		c.err = nil
+		c.mu.Unlock()
+		return token, nil
 	}
-	c.token, c.fetchedAt, c.expires = token, now, cacheUntil(expires, now)
-	c.err = nil
-	return token, nil
 }
 
 // Invalidate drops token if it is still the cached one and older than

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,10 +29,11 @@ func New(dir, configKey string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	// Tighten a directory created by an older version. Entries become 0600
-	// as they are rewritten.
+	// Tighten a directory created by an older version (best effort; the
+	// cache still works if this fails). Entries become 0600 as they are
+	// rewritten.
 	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, err
+		log.Printf("cache: restricting %s: %v", dir, err)
 	}
 	return &Store{dir: dir, configKey: configKey}, nil
 }

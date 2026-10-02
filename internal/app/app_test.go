@@ -529,3 +529,19 @@ func TestCacheWritesKeepNewestLoad(t *testing.T) {
 		t.Errorf("cache holds %d tasks, want the newer 2", len(ct.Tasks))
 	}
 }
+
+func TestPartialFailureKeepsNarrowerLoadedWindow(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"}, &fakeBackend{name: "B"})
+	m = send(m, tasksLoadedMsg{seq: m.loadSeq, days: 93, failures: []profileFailure{{"B", errors.New("timeout")}}})
+	if m.loadedDays != defaultScopeDays {
+		t.Errorf("loadedDays = %d, want %d while B only has the earlier window", m.loadedDays, defaultScopeDays)
+	}
+}
+
+func TestInitStartsCancellableLoad(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"})
+	m = send(m, refreshMsg{})
+	if m.loadSeq != 1 || m.cancelLoad == nil || !m.loadingTasks {
+		t.Errorf("first load not tracked: seq=%d cancel=%v loading=%v", m.loadSeq, m.cancelLoad != nil, m.loadingTasks)
+	}
+}

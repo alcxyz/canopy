@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
@@ -16,11 +15,10 @@ func (m Model) Init() tea.Cmd {
 	if len(m.backends) == 0 {
 		return nil
 	}
-	// Init cannot keep the cancel function (it has a value receiver), so the
-	// first load is only bounded by its timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	// The first load is started from Update so that its cancel function is
+	// kept and a quick follow-up refresh can supersede it.
 	return tea.Batch(
-		loadTasks(ctx, cancel, m.backends, m.loadSeq, m.scopeDays),
+		func() tea.Msg { return refreshMsg{} },
 		tickCmd(m.refreshInterval()),
 		checkLatestVersion(m.version),
 	)
@@ -93,6 +91,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case refreshMsg:
+		return m, m.startLoad()
+
 	case tickMsg:
 		cmds := []tea.Cmd{tickCmd(m.refreshInterval())}
 		if !m.loadingTasks {
@@ -141,7 +142,12 @@ func (m Model) applyTasks(msg tasksLoadedMsg) Model {
 		m.teamTasks = keepFailedProfiles(m.teamTasks, msg.teamTasks, failed)
 		m.doneTasks = keepFailedProfiles(m.doneTasks, msg.doneTasks, failed)
 		m.tasksLoadedAt = time.Now()
-		m.loadedDays = msg.days
+		if len(msg.failures) == 0 {
+			m.loadedDays = msg.days
+		} else {
+			// Failed profiles keep data from the earlier, possibly narrower load.
+			m.loadedDays = min(m.loadedDays, msg.days)
+		}
 		m.saveCachedTasks()
 		m.err = nil // partial failures are reported in the status bar
 		status = fmt.Sprintf("%d my · %d team · %d done",

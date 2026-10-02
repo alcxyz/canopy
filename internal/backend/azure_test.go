@@ -329,3 +329,29 @@ func TestAcquireGivesUpWhenCancelled(t *testing.T) {
 		t.Errorf("acquire = %v", err)
 	}
 }
+
+func TestTokenCacheWaitersHonourContext(t *testing.T) {
+	release := make(chan struct{})
+	c := &azTokenCache{fetch: func(context.Context) (string, time.Time, error) {
+		<-release
+		return "tok", time.Now().Add(time.Hour), nil
+	}}
+	defer close(release)
+
+	go func() { _, _ = c.Token(context.Background()) }() // slow az call
+	for {
+		c.mu.Lock()
+		busy := c.inflight != nil
+		c.mu.Unlock()
+		if busy {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := c.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("waiting caller got %v, want its deadline", err)
+	}
+}

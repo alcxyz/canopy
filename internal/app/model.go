@@ -161,9 +161,7 @@ func New(o Options) Model {
 		m.version = "dev"
 	}
 	if len(backends) > 0 {
-		// Init issues the first load with this sequence number.
-		m.loadingTasks = true
-		m.loadSeq = 1
+		m.loadingTasks = true // the first load starts as soon as the program runs
 	}
 
 	// Initialise cache and load last-known data for instant startup.
