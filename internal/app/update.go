@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/alcxyz/canopy/internal/model"
+	"github.com/alcxyz/canopy/internal/platform"
 )
 
 func (m Model) Init() tea.Cmd {
@@ -147,50 +148,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Tab navigation
 	case "h":
 		if m.activeTab > 0 {
-			m.activeTab--
-			m.cursor = 0
-			m.navStack = nil
-			m.clearCycleFilter()
-			m.filterQuery = ""
-			go m.saveState()
+			m.switchTab(m.activeTab - 1)
 		}
 	case "l":
 		if m.activeTab < tabViews {
-			m.activeTab++
-			m.cursor = 0
-			m.navStack = nil
-			m.clearCycleFilter()
-			m.filterQuery = ""
-			go m.saveState()
+			m.switchTab(m.activeTab + 1)
 		}
 	case "1":
-		m.activeTab = tabMyTasks
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
+		m.switchTab(tabMyTasks)
 	case "2":
-		m.activeTab = tabTeam
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
+		m.switchTab(tabTeam)
 	case "3":
-		m.activeTab = tabDone
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
+		m.switchTab(tabDone)
 	case "4":
-		m.activeTab = tabViews
-		m.cursor = 0
-		m.navStack = nil
-		m.clearCycleFilter()
-		m.filterQuery = ""
-		go m.saveState()
+		m.switchTab(tabViews)
 
 	// List navigation
 	case "j", "down":
@@ -254,20 +225,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Actions
 	case "c":
 		if m.activeTab != tabViews && m.canCreate() {
-			m.showForm = true
-			m.formField = formFieldTitle
-			m.formTitle = ""
-			m.formDesc = ""
-			m.formTags = ""
-			m.formStartDate = ""
-			m.formTargetDate = ""
-			m.formAcceptCriteria = ""
-			m.formErr = ""
-			m.formSubmitting = false
-			m.formType = m.defaultFormTypeIndex()
-			m.formAssignee = m.defaultAssignee()
-			m.formIteration = ""
-			return m, m.resolveIteration()
+			return m, m.openCreateForm()
 		}
 
 	case "r":
@@ -294,7 +252,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case " ":
 		if t, ok := m.taskAtCursor(); ok && t.URL != "" {
-			copyToClipboard(t.URL)
+			platform.CopyToClipboard(t.URL)
 			m.statusMsg = "copied URL to clipboard"
 		}
 	case "o":
@@ -353,11 +311,11 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "o":
 		if m.detailTask.URL != "" {
-			openURL(m.detailTask.URL)
+			platform.OpenURL(m.detailTask.URL)
 		}
 	case " ":
 		if m.detailTask.URL != "" {
-			copyToClipboard(m.detailTask.URL)
+			platform.CopyToClipboard(m.detailTask.URL)
 			m.statusMsg = "copied URL to clipboard"
 			m.showDetail = false
 		}
@@ -402,6 +360,15 @@ func (m *Model) clampCursor() {
 	}
 }
 
+func (m *Model) switchTab(next tab) {
+	m.activeTab = next
+	m.cursor = 0
+	m.navStack = nil
+	m.clearCycleFilter()
+	m.filterQuery = ""
+	m.saveState()
+}
+
 func (m Model) listLen() int {
 	if m.activeTab == tabViews {
 		return len(m.cfg.Views)
@@ -422,7 +389,7 @@ func (m Model) taskAtCursor() (model.Task, bool) {
 
 func (m Model) openInBrowser() {
 	if t, ok := m.taskAtCursor(); ok && t.URL != "" {
-		openURL(t.URL)
+		platform.OpenURL(t.URL)
 	}
 }
 

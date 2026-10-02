@@ -74,6 +74,20 @@ func TestBuildWIQL_UpdatedSince(t *testing.T) {
 	}
 }
 
+func TestBuildWIQL_UpdatedSinceToday(t *testing.T) {
+	q := buildWIQL(config.Filter{UpdatedSince: "today"}, "", nil, "")
+	if !strings.Contains(q, "[System.ChangedDate] >= @today - 0") {
+		t.Errorf("expected today date clause, got: %s", q)
+	}
+}
+
+func TestBuildWIQL_UpdatedSinceUnknown(t *testing.T) {
+	q := buildWIQL(config.Filter{UpdatedSince: "someday"}, "", nil, "")
+	if strings.Contains(q, "[System.ChangedDate] >=") {
+		t.Errorf("expected no date clause for unknown range, got: %s", q)
+	}
+}
+
 func TestBuildWIQL_Sprint(t *testing.T) {
 	q := buildWIQL(config.Filter{Sprint: "current"}, "", nil, "Project\\Sprint 5")
 	if !strings.Contains(q, "[System.IterationPath] = 'Project\\Sprint 5'") {

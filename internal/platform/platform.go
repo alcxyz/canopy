@@ -1,4 +1,5 @@
-package app
+// Package platform contains small host OS integrations used by the TUI.
+package platform
 
 import (
 	"os/exec"
@@ -6,20 +7,23 @@ import (
 	"strings"
 )
 
-func openURL(url string) {
+// OpenURL opens url with the operating system's default browser.
+func OpenURL(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
 		cmd = exec.Command("open", url)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", url)
+		cmd = exec.Command("cmd", "/c", "start", "", url)
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
 }
 
-func copyToClipboard(s string) {
+// CopyToClipboard writes s to the operating system clipboard when a supported
+// clipboard command is available.
+func CopyToClipboard(s string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -27,7 +31,6 @@ func copyToClipboard(s string) {
 	case "windows":
 		cmd = exec.Command("clip")
 	default:
-		// Try wl-copy (Wayland) first, fall back to xclip.
 		if _, err := exec.LookPath("wl-copy"); err == nil {
 			cmd = exec.Command("wl-copy")
 		} else {

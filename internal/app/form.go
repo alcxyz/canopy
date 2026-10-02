@@ -205,6 +205,23 @@ func (m Model) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) openCreateForm() tea.Cmd {
+	m.showForm = true
+	m.formField = formFieldTitle
+	m.formTitle = ""
+	m.formDesc = ""
+	m.formTags = ""
+	m.formStartDate = ""
+	m.formTargetDate = ""
+	m.formAcceptCriteria = ""
+	m.formErr = ""
+	m.formSubmitting = false
+	m.formType = m.defaultFormTypeIndex()
+	m.formAssignee = m.defaultAssignee()
+	m.formIteration = ""
+	return m.resolveIteration()
+}
+
 // ── Form rendering ─────────────────────────────────────────────────────
 
 func (m Model) renderForm() string {

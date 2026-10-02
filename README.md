@@ -37,7 +37,7 @@ brew install canopy
 
 ### Build from source
 
-Requires Go 1.22+.
+Requires Go 1.26+.
 
 ```sh
 git clone git@github.com:alcxyz/canopy.git

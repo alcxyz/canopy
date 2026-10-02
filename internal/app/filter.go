@@ -1,7 +1,7 @@
 package app
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -101,15 +101,8 @@ func (m Model) filteredTasks(tasks []model.Task) []model.Task {
 	}
 	out := make([]model.Task, 0, len(tasks))
 	for _, t := range tasks {
-		if q != "" {
-			if !strings.Contains(strings.ToLower(t.Title), q) &&
-				!strings.Contains(strings.ToLower(t.Assignee), q) &&
-				!strings.Contains(strings.ToLower(string(t.Type)), q) &&
-				!strings.Contains(strings.ToLower(t.ID), q) &&
-				!strings.Contains(strings.ToLower(t.Sprint), q) &&
-				!labelsContain(t.Labels, q) {
-				continue
-			}
+		if !taskMatchesQuery(t, q) {
+			continue
 		}
 		if !m.cycleMatch("assignee", t.Assignee) {
 			continue
@@ -126,6 +119,18 @@ func (m Model) filteredTasks(tasks []model.Task) []model.Task {
 		out = append(out, t)
 	}
 	return out
+}
+
+func taskMatchesQuery(t model.Task, q string) bool {
+	if q == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(t.Title), q) ||
+		strings.Contains(strings.ToLower(t.Assignee), q) ||
+		strings.Contains(strings.ToLower(string(t.Type)), q) ||
+		strings.Contains(strings.ToLower(t.ID), q) ||
+		strings.Contains(strings.ToLower(t.Sprint), q) ||
+		labelsContain(t.Labels, q)
 }
 
 // labelsContain returns true if any label contains the query substring.
@@ -224,14 +229,10 @@ func (m Model) collectCycleValues(field string) []string {
 			add(t)
 		}
 	}
+	presetLen := len(vals)
 	for _, t := range tasks {
-		if q != "" {
-			if !strings.Contains(strings.ToLower(t.Title), q) &&
-				!strings.Contains(strings.ToLower(t.Assignee), q) &&
-				!strings.Contains(strings.ToLower(string(t.Type)), q) &&
-				!labelsContain(t.Labels, q) {
-				continue
-			}
+		if !taskMatchesQuery(t, q) {
+			continue
 		}
 		switch field {
 		case "assignee":
@@ -244,7 +245,7 @@ func (m Model) collectCycleValues(field string) []string {
 			}
 		}
 	}
-	sort.Strings(vals)
+	slices.Sort(vals[presetLen:])
 	return vals
 }
 

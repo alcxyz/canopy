@@ -38,6 +38,19 @@ type tickMsg time.Time
 type ggTimeoutMsg struct{}
 type versionCheckMsg struct{ latest string }
 
+var (
+	activeTaskStates = statusFilters(model.StateTodo, model.StateInProgress, model.StateInReview)
+	doneTaskStates   = statusFilters(model.StateDone, model.StateClosed)
+)
+
+func statusFilters(states ...model.TaskState) []string {
+	statuses := make([]string, len(states))
+	for i, state := range states {
+		statuses[i] = string(state)
+	}
+	return statuses
+}
+
 // ── Commands ────────────────────────────────────────────────────────────
 
 // loadAllTasks fetches my tasks, team tasks (active only), and done tasks
@@ -56,7 +69,7 @@ func (m Model) loadAllTasks() tea.Cmd {
 			// My active tasks (not done/closed)
 			my, err := b.ListTasks(ctx, config.Filter{
 				Assignee:     "me",
-				Status:       []string{"todo", "in-progress", "in-review"},
+				Status:       activeTaskStates,
 				UpdatedSince: scope,
 			})
 			if err != nil {
@@ -66,7 +79,7 @@ func (m Model) loadAllTasks() tea.Cmd {
 
 			// Team active tasks (not done/closed)
 			team, err := b.ListTasks(ctx, config.Filter{
-				Status:       []string{"todo", "in-progress", "in-review"},
+				Status:       activeTaskStates,
 				UpdatedSince: scope,
 			})
 			if err != nil {
@@ -76,7 +89,7 @@ func (m Model) loadAllTasks() tea.Cmd {
 
 			// Done/closed tasks
 			done, err := b.ListTasks(ctx, config.Filter{
-				Status:       []string{"done", "closed"},
+				Status:       doneTaskStates,
 				UpdatedSince: scope,
 			})
 			if err != nil {
