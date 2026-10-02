@@ -303,3 +303,29 @@ func TestResolveIterationPath_FallsBackToLiteral(t *testing.T) {
 		t.Error("previous cannot be resolved without iterations")
 	}
 }
+
+func TestAzErrorLineSkipsWarnings(t *testing.T) {
+	stderr := "WARNING: A newer version of az is available\nERROR: Please run 'az login' to setup account.\n"
+	if got := azErrorLine(stderr); got != "ERROR: Please run 'az login' to setup account." {
+		t.Errorf("azErrorLine = %q", got)
+	}
+	if got := azErrorLine("something odd\nmore"); got != "something odd" {
+		t.Errorf("fallback = %q", got)
+	}
+}
+
+func TestAcquireGivesUpWhenCancelled(t *testing.T) {
+	for range cap(sem) {
+		sem <- struct{}{}
+	}
+	defer func() {
+		for range cap(sem) {
+			<-sem
+		}
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := acquire(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("acquire = %v", err)
+	}
+}

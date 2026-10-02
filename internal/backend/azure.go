@@ -22,7 +22,17 @@ import (
 // exhausting the budget when multiple profiles or refreshes overlap.
 var sem = make(chan struct{}, 5)
 
-func acquire() { sem <- struct{}{} }
+// acquire takes a request slot, giving up if ctx ends first (for example when
+// a newer refresh cancels this one).
+func acquire(ctx context.Context) error {
+	select {
+	case sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func release() { <-sem }
 
 // wiqlTop caps the number of work item IDs used from one WIQL query.
@@ -64,7 +74,9 @@ func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, bo
 		return nil, err
 	}
 
-	acquire()
+	if err := acquire(ctx); err != nil {
+		return nil, err
+	}
 	defer release()
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)

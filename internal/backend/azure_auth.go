@@ -117,7 +117,7 @@ func azCLIError(err error) error {
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		if msg := firstLine(string(exitErr.Stderr)); msg != "" {
+		if msg := azErrorLine(string(exitErr.Stderr)); msg != "" {
 			return fmt.Errorf("azure-boards: az CLI failed (run 'az login'?): %s", msg)
 		}
 	}
@@ -152,6 +152,17 @@ func parseAzToken(out []byte) (string, time.Time, error) {
 		}
 	}
 	return result.AccessToken, expires, nil
+}
+
+// azErrorLine picks the line az used to report the failure, skipping the
+// WARNING lines it may print first.
+func azErrorLine(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "ERROR") {
+			return firstLine(line)
+		}
+	}
+	return firstLine(stderr)
 }
 
 func firstLine(s string) string {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -461,5 +462,70 @@ func TestCachedTasksRestoreLoadedWindow(t *testing.T) {
 	}
 	if m.tasksStatus == "" {
 		t.Error("closing a view before the first load should restore the cached status")
+	}
+}
+
+func TestOtherFilterKeepsWidenedScope(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"})
+	for range 8 { // to "last quarter"
+		m, _ = press(t, m, "f")
+	}
+	wide := m.scopeDays
+	m, _ = press(t, m, "s") // switch to a type filter (no task types loaded → no-op)
+	m.cycleField, m.cycleValues, m.cycleIdx = "assignee", []string{"ann"}, 0
+	if got := m.requiredScopeDays(); got != wide {
+		t.Errorf("scope with assignee filter = %d, want %d", got, wide)
+	}
+	m, _ = press(t, m, "esc")
+	if m.scopeDays != defaultScopeDays {
+		t.Errorf("clearing filters should restore the default, got %d", m.scopeDays)
+	}
+}
+
+func TestSupersededLoadIsCancelled(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"})
+	m.startLoad()
+	first := m.cancelLoad
+	ctxDone := make(chan struct{})
+	m.cancelLoad = func() { first(); close(ctxDone) }
+	m.startLoad()
+	select {
+	case <-ctxDone:
+	default:
+		t.Error("starting a new load should cancel the previous one")
+	}
+}
+
+func TestCacheWritesKeepNewestLoad(t *testing.T) {
+	dir := t.TempDir()
+	cs, err := cache.New(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newTestModel()
+	m.cache, m.cacheWrites = cs, &cacheWriter{}
+
+	m.loadSeq, m.myTasks = 2, tasks("A", 2)
+	m.saveCachedTasks()
+	m.loadSeq, m.myTasks = 1, tasks("A", 5) // an older load finishing late
+	m.saveCachedTasks()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		m.cacheWrites.mu.Lock()
+		written := m.cacheWrites.written
+		m.cacheWrites.mu.Unlock()
+		if written == 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Whichever order the goroutines ran in, the older write is skipped or
+	// overwritten, so once the newer one is done the file holds its data.
+	m.cacheWrites.mu.Lock()
+	defer m.cacheWrites.mu.Unlock()
+	var ct cachedTasks
+	if e := cs.Get("my_tasks", 0); e == nil || json.Unmarshal(e.Data, &ct) != nil || len(ct.Tasks) != 2 {
+		t.Errorf("cache holds %d tasks, want the newer 2", len(ct.Tasks))
 	}
 }

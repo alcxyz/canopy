@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -15,8 +16,11 @@ func (m Model) Init() tea.Cmd {
 	if len(m.backends) == 0 {
 		return nil
 	}
+	// Init cannot keep the cancel function (it has a value receiver), so the
+	// first load is only bounded by its timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 	return tea.Batch(
-		loadTasks(m.backends, m.loadSeq, m.scopeDays),
+		loadTasks(ctx, cancel, m.backends, m.loadSeq, m.scopeDays),
 		tickCmd(m.refreshInterval()),
 		checkLatestVersion(m.version),
 	)
@@ -523,6 +527,10 @@ func (m *Model) closeView() {
 	m.viewErr = nil
 	m.viewSeq++
 	m.loadingView = false
+	if m.cancelView != nil {
+		m.cancelView()
+		m.cancelView = nil
+	}
 	m.statusMsg = m.tasksStatus
 }
 

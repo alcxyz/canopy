@@ -77,17 +77,23 @@ func bucketDays(label string, now time.Time) int {
 	return int(math.Round(today.Sub(startDay).Hours() / 24))
 }
 
-// requiredScopeDays returns the history window the task tabs need for the
-// active date filter. The window only widens while a date filter is active,
-// so cycling through buckets does not reload back and forth. Backends bound
-// queries by last change, which covers every date field except the planning
-// dates (start, target); those filter only the tasks already loaded.
+// requiredScopeDays returns the history window the task tabs need. The window
+// only widens while a date filter is active, so cycling through buckets does
+// not reload back and forth, and it is kept while other filters chosen from
+// the wider data remain active; clearing all filters restores the default.
+// Backends bound queries by last change, which covers every date field except
+// the planning dates (start, target); those filter only the tasks loaded.
 func (m Model) requiredScopeDays() int {
-	label, ok := m.activeCycleValue("date")
-	if !ok || m.viewOpen() {
+	label, isDate := m.activeCycleValue("date")
+	switch {
+	case m.viewOpen():
 		return defaultScopeDays
+	case isDate:
+		return max(m.scopeDays, defaultScopeDays, bucketDays(label, time.Now()))
+	case m.hasFilters():
+		return max(m.scopeDays, defaultScopeDays)
 	}
-	return max(m.scopeDays, defaultScopeDays, bucketDays(label, time.Now()))
+	return defaultScopeDays
 }
 
 // syncScope reloads the task tabs when the date filter needs a different

@@ -86,20 +86,32 @@ func (m *Model) startLoad() tea.Cmd {
 	m.scopeDays = m.requiredScopeDays()
 	m.loadSeq++
 	m.loadingTasks = true
-	return loadTasks(m.backends, m.loadSeq, m.scopeDays)
+	ctx, cancel := m.newLoadContext(&m.cancelLoad)
+	return loadTasks(ctx, cancel, m.backends, m.loadSeq, m.scopeDays)
 }
 
 // startViewLoad requests the tasks for the open view.
 func (m *Model) startViewLoad() tea.Cmd {
 	m.viewSeq++
 	m.loadingView = true
-	return loadView(m.backends, m.viewSeq, m.cfg.Views[m.viewIdx].Filters)
+	ctx, cancel := m.newLoadContext(&m.cancelView)
+	return loadView(ctx, cancel, m.backends, m.viewSeq, m.cfg.Views[m.viewIdx].Filters)
+}
+
+// newLoadContext cancels the load tracked by *current, which is superseded,
+// and returns the context for its replacement.
+func (m *Model) newLoadContext(current *context.CancelFunc) (context.Context, context.CancelFunc) {
+	if *current != nil {
+		(*current)()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	*current = cancel
+	return ctx, cancel
 }
 
 // loadTasks fetches my, team and done tasks changed in the last days days.
-func loadTasks(backends []backend.Backend, seq, days int) tea.Cmd {
+func loadTasks(ctx context.Context, cancel context.CancelFunc, backends []backend.Backend, seq, days int) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 		defer cancel()
 
 		since := fmt.Sprintf("last_%d_days", days)
@@ -125,9 +137,8 @@ func loadTasks(backends []backend.Backend, seq, days int) tea.Cmd {
 }
 
 // loadView fetches the tasks matching a configured view's filter.
-func loadView(backends []backend.Backend, seq int, filter config.Filter) tea.Cmd {
+func loadView(ctx context.Context, cancel context.CancelFunc, backends []backend.Backend, seq int, filter config.Filter) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 		defer cancel()
 
 		msg := viewLoadedMsg{seq: seq}

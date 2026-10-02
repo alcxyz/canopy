@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/alcxyz/canopy/internal/backend"
@@ -49,10 +51,12 @@ type Model struct {
 	loadingView   bool
 	loadSeq       int
 	viewSeq       int
-	scopeDays     int       // history window requested for the task tabs
-	loadedDays    int       // history window of the task data currently held
-	tasksStatus   string    // status of the last task load, restored when leaving a view
-	tasksLoadedAt time.Time // when the current task data was fetched
+	cancelLoad    context.CancelFunc // cancels the task load in flight
+	cancelView    context.CancelFunc // cancels the view load in flight
+	scopeDays     int                // history window requested for the task tabs
+	loadedDays    int                // history window of the task data currently held
+	tasksStatus   string             // status of the last task load, restored when leaving a view
+	tasksLoadedAt time.Time          // when the current task data was fetched
 
 	// UI state
 	activeTab     tab
@@ -94,7 +98,8 @@ type Model struct {
 	formSeq    int // incremented each time the form opens
 
 	// Cache
-	cache *cache.Store
+	cache       *cache.Store
+	cacheWrites *cacheWriter
 
 	// Version update check
 	latestVersion string // non-empty when a newer release is available
@@ -164,6 +169,7 @@ func New(o Options) Model {
 	// Initialise cache and load last-known data for instant startup.
 	if cs, err := cache.New(o.CacheDir, o.Cfg.CacheKey()); err == nil {
 		m.cache = cs
+		m.cacheWrites = &cacheWriter{}
 		m.loadCachedTasks()
 		st := cs.LoadUIState()
 		if st.ActiveTab >= int(tabMyTasks) && st.ActiveTab <= int(tabViews) {
@@ -220,18 +226,29 @@ func (m *Model) loadCachedTasks() {
 	}
 }
 
+// cacheWriter orders asynchronous cache writes so that data from an older
+// load never overwrites data from a newer one.
+type cacheWriter struct {
+	mu      sync.Mutex
+	written int // load sequence number of the last write
+}
+
 // saveCachedTasks persists task lists to disk asynchronously.
 func (m Model) saveCachedTasks() {
-	if m.cache == nil {
+	if m.cache == nil || m.cacheWrites == nil {
 		return
 	}
-	cs := m.cache
-	my := m.myTasks
-	team := m.teamTasks
-	done := m.doneTasks
+	cs, w, seq := m.cache, m.cacheWrites, m.loadSeq
+	lists := map[string][]model.Task{"my_tasks": m.myTasks, "team_tasks": m.teamTasks, "done_tasks": m.doneTasks}
 	days := m.loadedDays
 	go func() {
-		for key, tasks := range map[string][]model.Task{"my_tasks": my, "team_tasks": team, "done_tasks": done} {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if seq < w.written {
+			return
+		}
+		w.written = seq
+		for key, tasks := range lists {
 			if err := cs.Set(key, cachedTasks{Tasks: tasks, Days: days}); err != nil {
 				log.Printf("cache: saving %s: %v", key, err)
 			}
