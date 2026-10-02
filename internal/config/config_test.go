@@ -223,3 +223,23 @@ func TestExampleConfigParsesCleanly(t *testing.T) {
 		t.Errorf("example config problems: %q", problems)
 	}
 }
+
+func TestParse_WrongTypeKeepsOtherFields(t *testing.T) {
+	cfg, problems := parse([]byte(`
+profiles:
+  - name: Work
+    backend: azure-boards
+    org: o
+    project: p
+refresh_secs: 5m
+`))
+	if len(cfg.Profiles) != 1 {
+		t.Fatalf("profiles lost on a type error: %+v", cfg)
+	}
+	if cfg.RefreshSecs != Default.RefreshSecs {
+		t.Errorf("refresh_secs = %d, want default", cfg.RefreshSecs)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "5m") {
+		t.Errorf("problems = %q", problems)
+	}
+}

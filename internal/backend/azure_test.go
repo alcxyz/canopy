@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,5 +171,32 @@ func TestCacheUntil(t *testing.T) {
 	exp := now.Add(time.Hour)
 	if got := cacheUntil(exp, now); !got.Equal(exp.Add(-azTokenMargin)) {
 		t.Errorf("known expiry: got %v", got)
+	}
+}
+
+func TestListTasks_ReportsTruncation(t *testing.T) {
+	a := newTestAzure(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/org/proj/_apis/wit/wiql":
+			ids := make([]string, wiqlTop)
+			for i := range ids {
+				ids[i] = fmt.Sprintf(`{"id":%d}`, i+1)
+			}
+			_, _ = io.WriteString(w, `{"workItems":[`+strings.Join(ids, ",")+`]}`)
+		case "/org/proj/_apis/wit/workitems":
+			var items []string
+			for _, id := range strings.Split(r.URL.Query().Get("ids"), ",") {
+				items = append(items, `{"id":`+id+`,"fields":{"System.Title":"t"}}`)
+			}
+			_, _ = io.WriteString(w, `{"value":[`+strings.Join(items, ",")+`]}`)
+		}
+	})
+
+	tasks, err := a.ListTasks(context.Background(), config.Filter{})
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("err = %v, want ErrTruncated", err)
+	}
+	if len(tasks) != wiqlTop {
+		t.Errorf("got %d tasks, want %d", len(tasks), wiqlTop)
 	}
 }

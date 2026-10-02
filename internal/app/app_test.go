@@ -311,3 +311,46 @@ func TestDueIndicatorIgnoresFinishedTasks(t *testing.T) {
 		t.Errorf("open overdue task not flagged: %q", open)
 	}
 }
+
+func TestViewRefreshKeepsFailedProfileResults(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"}, &fakeBackend{name: "B"})
+	m.activeTab = tabViews
+	m.viewIdx = 0
+	m.viewTasks = append(tasks("A", 1), tasks("B", 2)...)
+	m.viewSeq = 1
+
+	m = send(m, viewLoadedMsg{seq: 1, tasks: tasks("A", 3), failures: []profileFailure{{"B", errors.New("down")}}})
+	if len(m.viewTasks) != 5 {
+		t.Errorf("view tasks = %d, want 3 fresh from A + 2 kept from B", len(m.viewTasks))
+	}
+}
+
+func TestIterationResultForClosedFormIsIgnored(t *testing.T) {
+	m := newTestModel(&fakeBackend{name: "A"})
+	m.openCreateForm()
+	stale := m.formSeq
+	m, _ = press(t, m, "esc")
+	m.openCreateForm()
+
+	m = send(m, iterationResolvedMsg{formSeq: stale, path: `A\Old`})
+	if got := m.form.values[formFieldIteration]; got != "" {
+		t.Errorf("stale lookup filled sprint with %q", got)
+	}
+	m = send(m, iterationResolvedMsg{formSeq: m.formSeq, path: `A\Current`})
+	if got := m.form.values[formFieldIteration]; got != `A\Current` {
+		t.Errorf("sprint = %q", got)
+	}
+}
+
+func TestTruncatedResultsAreKeptAndReported(t *testing.T) {
+	b := &fakeBackend{name: "A", tasks: tasks("A", 2), err: fmt.Errorf("%w at 2 items", backend.ErrTruncated)}
+	m := newTestModel(b)
+	cmd := m.startLoad()
+	m = send(m, cmd())
+	if len(m.myTasks) != 2 || m.err != nil {
+		t.Errorf("truncated results should be applied, my=%d err=%v", len(m.myTasks), m.err)
+	}
+	if !strings.Contains(m.statusMsg, "capped") {
+		t.Errorf("status should mention the cap: %q", m.statusMsg)
+	}
+}

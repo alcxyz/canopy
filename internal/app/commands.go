@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/alcxyz/canopy/internal/backend"
 	"github.com/alcxyz/canopy/internal/config"
 	"github.com/alcxyz/canopy/internal/model"
+	"github.com/alcxyz/canopy/internal/platform"
 )
 
 // loadTimeout bounds a whole refresh across all profiles.
@@ -34,12 +36,14 @@ type tasksLoadedMsg struct {
 	teamTasks []model.Task
 	doneTasks []model.Task
 	failures  []profileFailure
+	truncated bool // some results hit a backend's size cap
 }
 
 type viewLoadedMsg struct {
-	seq      int
-	tasks    []model.Task
-	failures []profileFailure
+	seq       int
+	tasks     []model.Task
+	failures  []profileFailure
+	truncated bool
 }
 
 type taskCreatedMsg struct {
@@ -48,9 +52,12 @@ type taskCreatedMsg struct {
 }
 
 type iterationResolvedMsg struct {
-	path string
-	err  error
+	formSeq int // form the lookup was made for
+	path    string
+	err     error
 }
+
+type openResultMsg struct{ err error }
 
 type tickMsg time.Time
 type ggTimeoutMsg struct{}
@@ -72,8 +79,10 @@ func statusFilters(states ...model.TaskState) []string {
 // ── Loading ─────────────────────────────────────────────────────────────
 
 // startLoad requests a refresh of the task tabs. Any load still in flight is
-// superseded.
+// superseded. The history window is recomputed so an active date filter
+// stays covered as days pass.
 func (m *Model) startLoad() tea.Cmd {
+	m.scopeDays = m.requiredScopeDays()
 	m.loadSeq++
 	m.loadingTasks = true
 	return loadTasks(m.backends, m.loadSeq, m.scopeDays)
@@ -105,6 +114,7 @@ func loadTasks(backends []backend.Backend, seq, days int) tea.Cmd {
 				msg.failures = append(msg.failures, profileFailure{backends[i].Name(), r.err})
 				continue
 			}
+			msg.truncated = msg.truncated || r.truncated
 			msg.myTasks = append(msg.myTasks, r.lists[0]...)
 			msg.teamTasks = append(msg.teamTasks, r.lists[1]...)
 			msg.doneTasks = append(msg.doneTasks, r.lists[2]...)
@@ -125,6 +135,7 @@ func loadView(backends []backend.Backend, seq int, filter config.Filter) tea.Cmd
 				msg.failures = append(msg.failures, profileFailure{backends[i].Name(), r.err})
 				continue
 			}
+			msg.truncated = msg.truncated || r.truncated
 			msg.tasks = append(msg.tasks, r.lists[0]...)
 		}
 		return msg
@@ -132,10 +143,11 @@ func loadView(backends []backend.Backend, seq int, filter config.Filter) tea.Cmd
 }
 
 // backendResult holds one task list per requested filter, or the first error
-// the backend returned.
+// the backend returned. Capped lists are kept and flagged as truncated.
 type backendResult struct {
-	lists [][]model.Task
-	err   error
+	lists     [][]model.Task
+	err       error
+	truncated bool
 }
 
 // fetchAll runs every filter against every backend concurrently. A failing
@@ -157,9 +169,12 @@ func fetchAll(ctx context.Context, backends []backend.Backend, filters []config.
 
 	for i := range results {
 		for _, err := range errs[i] {
-			if err != nil {
+			switch {
+			case err == nil:
+			case errors.Is(err, backend.ErrTruncated):
+				results[i].truncated = true
+			case results[i].err == nil:
 				results[i].err = err
-				break
 			}
 		}
 	}
@@ -288,12 +303,19 @@ func splitTags(s string) []string {
 	return tags
 }
 
-// resolveIteration fetches the current iteration path for the form.
-func resolveIteration(creator backend.TaskCreator) tea.Cmd {
+// resolveIteration fetches the current iteration path for form formSeq.
+func resolveIteration(creator backend.TaskCreator, formSeq int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		path, err := creator.CurrentIteration(ctx)
-		return iterationResolvedMsg{path: path, err: err}
+		return iterationResolvedMsg{formSeq: formSeq, path: path, err: err}
+	}
+}
+
+// openURL opens url in the browser and reports whether the opener failed.
+func openURL(url string) tea.Cmd {
+	return func() tea.Msg {
+		return openResultMsg{err: platform.OpenURL(url)}
 	}
 }

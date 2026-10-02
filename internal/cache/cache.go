@@ -28,6 +28,11 @@ func New(dir, configKey string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	// Tighten a directory created by an older version. Entries become 0600
+	// as they are rewritten.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, err
+	}
 	return &Store{dir: dir, configKey: configKey}, nil
 }
 

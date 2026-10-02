@@ -168,7 +168,8 @@ func (m *Model) openCreateForm() tea.Cmd {
 	}
 	m.form.values[formFieldAssignee] = m.defaultAssignee(profile)
 	m.showForm = true
-	return resolveIteration(creator)
+	m.formSeq++
+	return resolveIteration(creator, m.formSeq)
 }
 
 // creatorFor returns the backend that should create a child of parent (or a

@@ -23,13 +23,18 @@ var exampleConfig []byte
 
 func setupLog() (string, func()) {
 	logPath := config.LogPath()
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+	dir := filepath.Dir(logPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", func() {}
 	}
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", func() {}
 	}
+	// Tighten files created by older versions; MkdirAll and OpenFile only
+	// apply modes to new paths.
+	_ = os.Chmod(dir, 0o700)
+	_ = f.Chmod(0o600)
 	log.SetOutput(f)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 	return logPath, func() { _ = f.Close() }

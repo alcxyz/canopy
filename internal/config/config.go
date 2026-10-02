@@ -150,10 +150,15 @@ func parse(data []byte) (Config, []string) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		// Retry leniently so a stray key does not discard the whole config.
+		// Retry leniently: unknown keys are skipped and fields with the wrong
+		// type are left at their defaults, so one mistake does not discard the
+		// rest of the config. Only syntax errors fall back to defaults.
 		cfg = Default
 		if lerr := yaml.Unmarshal(data, &cfg); lerr != nil {
-			return Default, []string{"config: " + oneLine(lerr.Error())}
+			var typeErr *yaml.TypeError
+			if !errors.As(lerr, &typeErr) {
+				return Default, []string{"config: " + oneLine(lerr.Error())}
+			}
 		}
 		problems = append(problems, "config: "+oneLine(err.Error()))
 	}

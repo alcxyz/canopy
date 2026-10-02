@@ -3,12 +3,15 @@ package platform
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
 )
 
-// OpenURL opens url with the operating system's default browser.
+// OpenURL opens url with the operating system's default browser. It waits for
+// the opener (xdg-open, open, …), which normally exits once it has handed the
+// URL to the browser, so callers should run it off the UI goroutine.
 func OpenURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -19,12 +22,18 @@ func OpenURL(url string) error {
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
-	if err := cmd.Start(); err != nil {
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%w: %s", err, firstLine(msg))
+		}
 		return err
 	}
-	// Reap the opener once it exits so it does not linger as a zombie.
-	go func() { _ = cmd.Wait() }()
 	return nil
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }
 
 // clipboardCommands lists the clipboard writers tried on Linux and BSD, in order.

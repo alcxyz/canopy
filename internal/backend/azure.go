@@ -26,7 +26,7 @@ func acquire() { sem <- struct{}{} }
 func release() { <-sem }
 
 // wiqlTop caps the number of work item IDs returned by one WIQL query.
-const wiqlTop = 200
+const wiqlTop = 1000
 
 // workItemBatchSize is the Azure DevOps limit for IDs per work item request.
 const workItemBatchSize = 200
@@ -125,10 +125,6 @@ func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]mo
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	if len(ids) >= wiqlTop {
-		log.Printf("azure-boards %s: query returned the %d-item cap; results are truncated", a.profile.Name, wiqlTop)
-	}
-
 	items, err := a.getWorkItems(ctx, ids, "$expand=all")
 	if err != nil {
 		return nil, fmt.Errorf("fetching work items: %w", err)
@@ -139,6 +135,9 @@ func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]mo
 	}
 
 	a.resolveParentTitles(ctx, tasks)
+	if len(ids) >= wiqlTop {
+		return tasks, fmt.Errorf("%w at %d items", ErrTruncated, wiqlTop)
+	}
 	return tasks, nil
 }
 

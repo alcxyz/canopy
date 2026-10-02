@@ -65,3 +65,20 @@ func TestUIStateRoundTrip(t *testing.T) {
 		t.Errorf("state = %+v", got)
 	}
 }
+
+func TestNewTightensExistingDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "canopy")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(dir, "k"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("cache dir mode = %o, want 700", perm)
+	}
+}

@@ -73,10 +73,19 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.refresh()
 
 	case iterationResolvedMsg:
-		if msg.err != nil {
+		switch {
+		case msg.formSeq != m.formSeq || !m.showForm:
+			// The lookup belongs to a form that has since closed.
+		case msg.err != nil:
 			log.Printf("resolving current iteration: %v", msg.err)
-		} else if m.showForm && m.form.values[formFieldIteration] == "" {
+		case m.form.values[formFieldIteration] == "":
 			m.form.values[formFieldIteration] = msg.path
+		}
+		return m, nil
+
+	case openResultMsg:
+		if msg.err != nil {
+			m.statusMsg = "open failed: " + msg.err.Error()
 		}
 		return m, nil
 
@@ -134,6 +143,9 @@ func (m Model) applyTasks(msg tasksLoadedMsg) Model {
 	m.err = nil
 	m.statusMsg = fmt.Sprintf("%d my · %d team · %d done",
 		len(m.myTasks), len(m.teamTasks), len(m.doneTasks))
+	if msg.truncated {
+		m.statusMsg += truncatedNote
+	}
 	if len(msg.failures) > 0 {
 		m.err = msg.failures[0].err
 		m.statusMsg += " · failed " + failureSummary(msg.failures)
@@ -155,15 +167,25 @@ func (m Model) applyView(msg viewLoadedMsg) Model {
 		m.statusMsg = "Error: " + failureSummary(msg.failures)
 		return m
 	}
-	m.viewTasks = msg.tasks
+	failed := map[string]bool{}
+	for _, f := range msg.failures {
+		failed[f.profile] = true
+	}
+	m.viewTasks = keepFailedProfiles(m.viewTasks, msg.tasks, failed)
 	m.err = nil
-	m.statusMsg = fmt.Sprintf("%s: %d tasks", m.cfg.Views[m.viewIdx].Name, len(msg.tasks))
+	m.statusMsg = fmt.Sprintf("%s: %d tasks", m.cfg.Views[m.viewIdx].Name, len(m.viewTasks))
+	if msg.truncated {
+		m.statusMsg += truncatedNote
+	}
 	if len(msg.failures) > 0 {
 		m.err = msg.failures[0].err
 		m.statusMsg += " · failed " + failureSummary(msg.failures)
 	}
 	return m
 }
+
+// truncatedNote is appended to the status when a backend capped its results.
+const truncatedNote = " · some results capped (newest kept)"
 
 // keepFailedProfiles returns fresh plus the previous tasks of profiles whose
 // refresh failed, so a failing profile keeps showing its last known data.
@@ -335,8 +357,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.copyURL(t)
 		}
 	case "o":
-		if t, ok := m.taskAtCursor(); ok {
-			m.openURL(t)
+		if t, ok := m.taskAtCursor(); ok && t.URL != "" {
+			return m, openURL(t.URL)
 		}
 	case "[":
 		m.navigateSibling(-1)
@@ -387,7 +409,9 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.detailTask = tasks[m.cursor]
 		}
 	case "o":
-		m.openURL(m.detailTask)
+		if m.detailTask.URL != "" {
+			return m, openURL(m.detailTask.URL)
+		}
 	case " ":
 		m.copyURL(m.detailTask)
 		m.showDetail = false
@@ -420,15 +444,6 @@ func (m *Model) copyURL(t model.Task) {
 		return
 	}
 	m.statusMsg = "copied URL to clipboard"
-}
-
-func (m *Model) openURL(t model.Task) {
-	if t.URL == "" {
-		return
-	}
-	if err := platform.OpenURL(t.URL); err != nil {
-		m.statusMsg = "open failed: " + err.Error()
-	}
 }
 
 // ── Cursor and scrolling ────────────────────────────────────────────────

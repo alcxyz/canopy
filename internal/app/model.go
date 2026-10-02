@@ -88,6 +88,7 @@ type Model struct {
 	detailTask model.Task
 	showForm   bool
 	form       createForm
+	formSeq    int // incremented each time the form opens
 
 	// Cache
 	cache *cache.Store
