@@ -166,10 +166,19 @@ func parse(data []byte) (Config, []string) {
 	if cfg.RefreshSecs <= 0 {
 		cfg.RefreshSecs = Default.RefreshSecs
 	}
+	// Profile names identify profiles at runtime, so they must be unique.
+	seen := map[string]bool{}
 	for i := range cfg.Profiles {
-		if cfg.Profiles[i].Name == "" {
-			cfg.Profiles[i].Name = fmt.Sprintf("profile %d", i+1)
+		p := &cfg.Profiles[i]
+		if p.Name == "" {
+			p.Name = fmt.Sprintf("profile %d", i+1)
 		}
+		if seen[p.Name] {
+			renamed := fmt.Sprintf("%s (%d)", p.Name, i+1)
+			problems = append(problems, fmt.Sprintf("duplicate profile name %q; using %q", p.Name, renamed))
+			p.Name = renamed
+		}
+		seen[p.Name] = true
 	}
 
 	return cfg, append(problems, cfg.Problems()...)

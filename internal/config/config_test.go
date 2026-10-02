@@ -243,3 +243,23 @@ refresh_secs: 5m
 		t.Errorf("problems = %q", problems)
 	}
 }
+
+func TestParse_DuplicateProfileNamesAreMadeUnique(t *testing.T) {
+	cfg, problems := parse([]byte(`
+profiles:
+  - name: Work
+    backend: azure-boards
+    org: a
+    project: p
+  - name: Work
+    backend: azure-boards
+    org: b
+    project: p
+`))
+	if cfg.Profiles[0].Name == cfg.Profiles[1].Name {
+		t.Fatalf("names not unique: %q", cfg.Profiles[1].Name)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "duplicate") {
+		t.Errorf("problems = %q", problems)
+	}
+}

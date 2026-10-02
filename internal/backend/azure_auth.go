@@ -22,19 +22,35 @@ const azTokenMargin = 5 * time.Minute
 // azTokenFallbackTTL bounds reuse when az does not report an expiry.
 const azTokenFallbackTTL = 5 * time.Minute
 
+// azTokenRetryDelay is how long a failed az call is reported to concurrent
+// and subsequent requests before az is tried again.
+const azTokenRetryDelay = 5 * time.Second
+
+// tokenSource provides bearer tokens for Azure DevOps requests.
+type tokenSource interface {
+	Token(ctx context.Context) (string, error)
+	// Invalidate drops token if it is still cached, after Azure rejected it.
+	Invalidate(token string)
+}
+
 // azTokenCache keeps the az CLI access token in memory. Starting az takes
 // roughly a second, so fetching a token per request made every refresh slow.
 // The token is never written to disk (see ADR-002).
 type azTokenCache struct {
-	mu      sync.Mutex
-	token   string
-	expires time.Time
+	fetch func(context.Context) (string, time.Time, error)
+
+	mu       sync.Mutex
+	token    string
+	expires  time.Time
+	err      error // last fetch failure, reused until errUntil
+	errUntil time.Time
 }
 
-var azTokens azTokenCache
+var azTokens = &azTokenCache{fetch: fetchAzToken}
 
 // Token returns a cached token, or fetches a new one from the az CLI when the
-// cached token is missing or close to expiry.
+// cached token is missing or close to expiry. A failed fetch is remembered
+// briefly so that a refresh's concurrent requests do not each run az in turn.
 func (c *azTokenCache) Token(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -43,13 +59,30 @@ func (c *azTokenCache) Token(ctx context.Context) (string, error) {
 	if c.token != "" && now.Before(c.expires) {
 		return c.token, nil
 	}
-	token, expires, err := fetchAzToken(ctx)
+	if c.err != nil && now.Before(c.errUntil) {
+		return "", c.err
+	}
+	token, expires, err := c.fetch(ctx)
 	if err != nil {
+		if ctx.Err() == nil {
+			c.err, c.errUntil = err, now.Add(azTokenRetryDelay)
+		}
 		return "", err
 	}
-	c.token = token
-	c.expires = cacheUntil(expires, now)
+	c.token, c.expires = token, cacheUntil(expires, now)
+	c.err = nil
 	return token, nil
+}
+
+// Invalidate drops token if it is still the cached one, so the next request
+// asks az again.
+func (c *azTokenCache) Invalidate(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token == token {
+		c.token = ""
+		c.expires = time.Time{}
+	}
 }
 
 // cacheUntil returns when a token expiring at expires should stop being reused.

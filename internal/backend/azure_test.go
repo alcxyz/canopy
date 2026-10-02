@@ -15,6 +15,15 @@ import (
 	"github.com/alcxyz/canopy/internal/config"
 )
 
+// staticToken is a tokenSource that always returns the same token.
+type staticToken struct {
+	token       string
+	invalidated []string
+}
+
+func (s *staticToken) Token(context.Context) (string, error) { return s.token, nil }
+func (s *staticToken) Invalidate(token string)               { s.invalidated = append(s.invalidated, token) }
+
 // newTestAzure returns an Azure backend pointed at a test server.
 func newTestAzure(t *testing.T, handler http.HandlerFunc) *azureBoards {
 	t.Helper()
@@ -24,7 +33,7 @@ func newTestAzure(t *testing.T, handler http.HandlerFunc) *azureBoards {
 		profile: config.Profile{Name: "Work", Org: "org", Project: "proj"},
 		client:  srv.Client(),
 		baseURL: srv.URL + "/org/proj",
-		token:   func(context.Context) (string, error) { return "test-token", nil },
+		tokens:  &staticToken{token: "test-token"},
 	}
 }
 
@@ -178,7 +187,7 @@ func TestListTasks_ReportsTruncation(t *testing.T) {
 	a := newTestAzure(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/org/proj/_apis/wit/wiql":
-			ids := make([]string, wiqlTop)
+			ids := make([]string, wiqlTop+1)
 			for i := range ids {
 				ids[i] = fmt.Sprintf(`{"id":%d}`, i+1)
 			}
@@ -198,5 +207,80 @@ func TestListTasks_ReportsTruncation(t *testing.T) {
 	}
 	if len(tasks) != wiqlTop {
 		t.Errorf("got %d tasks, want %d", len(tasks), wiqlTop)
+	}
+}
+
+func TestListTasks_ExactlyCapIsNotTruncated(t *testing.T) {
+	a := newTestAzure(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/org/proj/_apis/wit/wiql":
+			if got := r.URL.Query().Get("$top"); got != fmt.Sprint(wiqlTop+1) {
+				t.Errorf("$top = %s", got)
+			}
+			_, _ = io.WriteString(w, `{"workItems":[{"id":1}]}`)
+		case "/org/proj/_apis/wit/workitems":
+			_, _ = io.WriteString(w, `{"value":[{"id":1,"fields":{"System.Title":"t"}}]}`)
+		}
+	})
+	if _, err := a.ListTasks(context.Background(), config.Filter{}); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDoRequest_InvalidatesRejectedToken(t *testing.T) {
+	a := newTestAzure(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	_, _ = a.doRequest(context.Background(), "GET", a.baseURL+"/x", nil)
+	if got := a.tokens.(*staticToken).invalidated; len(got) != 1 || got[0] != "test-token" {
+		t.Errorf("invalidated = %q", got)
+	}
+}
+
+func TestHTTPError_JSONMessageIsOneLine(t *testing.T) {
+	err := httpError(400, []byte(`{"message":"first\nsecond"}`))
+	if got := err.Error(); got != "HTTP 400: first second" {
+		t.Errorf("error = %q", got)
+	}
+}
+
+func TestTokenCache(t *testing.T) {
+	calls := 0
+	fail := true
+	c := &azTokenCache{fetch: func(context.Context) (string, time.Time, error) {
+		calls++
+		if fail {
+			return "", time.Time{}, errors.New("not logged in")
+		}
+		return fmt.Sprintf("tok-%d", calls), time.Now().Add(time.Hour), nil
+	}}
+	ctx := context.Background()
+
+	// A failure is shared by requests within the retry delay.
+	_, err1 := c.Token(ctx)
+	_, err2 := c.Token(ctx)
+	if err1 == nil || err2 == nil || calls != 1 {
+		t.Fatalf("errors %v/%v after %d calls", err1, err2, calls)
+	}
+
+	// After the delay a fresh token is fetched and then reused.
+	fail = false
+	c.errUntil = time.Time{}
+	tok, err := c.Token(ctx)
+	if err != nil || tok != "tok-2" {
+		t.Fatalf("token = %q, %v", tok, err)
+	}
+	if again, _ := c.Token(ctx); again != tok || calls != 2 {
+		t.Errorf("cached token not reused: %q after %d calls", again, calls)
+	}
+
+	// Invalidating the cached token forces a refetch; stale tokens are ignored.
+	c.Invalidate("other")
+	if again, _ := c.Token(ctx); again != tok {
+		t.Error("invalidating a different token should keep the cache")
+	}
+	c.Invalidate(tok)
+	if again, _ := c.Token(ctx); again != "tok-3" {
+		t.Errorf("token after invalidate = %q", again)
 	}
 }

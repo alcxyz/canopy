@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -48,10 +49,10 @@ func main() {
 		// My tasks
 		fmt.Println()
 		myTasks, err := b.ListTasks(ctx, config.Filter{Assignee: "me"})
-		if err != nil {
+		if err != nil && !errors.Is(err, backend.ErrTruncated) {
 			fmt.Fprintf(os.Stderr, "  my tasks error: %v\n", err)
 		} else {
-			fmt.Printf("My Tasks (%d):\n", len(myTasks))
+			fmt.Printf("My Tasks (%d%s):\n", len(myTasks), truncatedNote(err))
 			for _, t := range myTasks {
 				parent := ""
 				if t.ParentTitle != "" {
@@ -64,14 +65,22 @@ func main() {
 		// Team tasks (all)
 		fmt.Println()
 		teamTasks, err := b.ListTasks(ctx, config.Filter{})
-		if err != nil {
+		if err != nil && !errors.Is(err, backend.ErrTruncated) {
 			fmt.Fprintf(os.Stderr, "  team tasks error: %v\n", err)
 		} else {
-			fmt.Printf("Team Tasks (%d):\n", len(teamTasks))
+			fmt.Printf("Team Tasks (%d%s):\n", len(teamTasks), truncatedNote(err))
 			for _, t := range teamTasks {
 				fmt.Printf("  [%s] %-12s %s — %s (%s)\n", t.State, t.Assignee, t.ID, t.Title, t.Type)
 			}
 		}
 		fmt.Println()
 	}
+}
+
+// truncatedNote marks a list that hit the backend's result cap.
+func truncatedNote(err error) string {
+	if err != nil {
+		return ", truncated"
+	}
+	return ""
 }

@@ -25,7 +25,7 @@ var sem = make(chan struct{}, 5)
 func acquire() { sem <- struct{}{} }
 func release() { <-sem }
 
-// wiqlTop caps the number of work item IDs returned by one WIQL query.
+// wiqlTop caps the number of work item IDs used from one WIQL query.
 const wiqlTop = 1000
 
 // workItemBatchSize is the Azure DevOps limit for IDs per work item request.
@@ -35,7 +35,7 @@ type azureBoards struct {
 	profile config.Profile
 	client  *http.Client
 	baseURL string // https://dev.azure.com/{org}/{project}
-	token   func(context.Context) (string, error)
+	tokens  tokenSource
 }
 
 func newAzureBoards(p config.Profile) (Backend, error) {
@@ -46,7 +46,7 @@ func newAzureBoards(p config.Profile) (Backend, error) {
 		profile: p,
 		client:  &http.Client{Timeout: 30 * time.Second},
 		baseURL: fmt.Sprintf("https://dev.azure.com/%s/%s", url.PathEscape(p.Org), url.PathEscape(p.Project)),
-		token:   azTokens.Token,
+		tokens:  azTokens,
 	}, nil
 }
 
@@ -59,7 +59,7 @@ func (a *azureBoards) doRequest(ctx context.Context, method, reqURL string, body
 func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, body io.Reader, contentType string) ([]byte, error) {
 	// Resolve the token before taking a request slot so a slow az CLI call
 	// does not hold up other requests.
-	token, err := a.token(ctx)
+	token, err := a.tokens.Token(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +84,11 @@ func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, bo
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		// The token was rejected (revoked, or az now uses another account);
+		// fetch a fresh one next time instead of reusing it until expiry.
+		a.tokens.Invalidate(token)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, httpError(resp.StatusCode, data)
 	}
@@ -97,12 +102,11 @@ func httpError(status int, body []byte) error {
 	var apiErr struct {
 		Message string `json:"message"`
 	}
-	msg := ""
+	msg := string(body)
 	if json.Unmarshal(body, &apiErr) == nil && apiErr.Message != "" {
 		msg = apiErr.Message
-	} else {
-		msg = strings.Join(strings.Fields(string(body)), " ")
 	}
+	msg = strings.Join(strings.Fields(msg), " ") // one line for the status bar
 	if msg == "" {
 		msg = http.StatusText(status)
 	}
@@ -125,6 +129,10 @@ func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]mo
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	// The query asks for one extra ID so a full page can be told apart from
+	// a truncated one.
+	truncated := len(ids) > wiqlTop
+	ids = ids[:min(len(ids), wiqlTop)]
 	items, err := a.getWorkItems(ctx, ids, "$expand=all")
 	if err != nil {
 		return nil, fmt.Errorf("fetching work items: %w", err)
@@ -135,7 +143,7 @@ func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]mo
 	}
 
 	a.resolveParentTitles(ctx, tasks)
-	if len(ids) >= wiqlTop {
+	if truncated {
 		return tasks, fmt.Errorf("%w at %d items", ErrTruncated, wiqlTop)
 	}
 	return tasks, nil
@@ -146,7 +154,7 @@ func (a *azureBoards) queryWIQL(ctx context.Context, query string) ([]int, error
 	if err != nil {
 		return nil, err
 	}
-	reqURL := fmt.Sprintf("%s/_apis/wit/wiql?api-version=7.0&$top=%d", a.baseURL, wiqlTop)
+	reqURL := fmt.Sprintf("%s/_apis/wit/wiql?api-version=7.0&$top=%d", a.baseURL, wiqlTop+1)
 	data, err := a.doRequest(ctx, "POST", reqURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("WIQL query: %w", err)

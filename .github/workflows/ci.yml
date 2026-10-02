@@ -136,7 +136,7 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
       - name: Verify or update vendorHash
         run: |
