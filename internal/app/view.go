@@ -282,12 +282,13 @@ func (m Model) renderViews() string {
 		if i == m.cursor {
 			prefix = "> "
 		}
+		// Each view must occupy exactly one row for scrolling to line up.
 		desc := ""
-		if v.Description != "" {
-			desc = ui.DimStyle.Render(" — " + v.Description)
+		if d := oneLine(v.Description); d != "" {
+			desc = ui.DimStyle.Render(" — " + d)
 		}
 
-		line := fmt.Sprintf("%s%s%s", prefix, ui.TitleStyle.Render(v.Name), desc)
+		line := fmt.Sprintf("%s%s%s", prefix, ui.TitleStyle.Render(oneLine(v.Name)), desc)
 		if i == m.cursor {
 			line = selRow(line)
 		}
@@ -349,6 +350,11 @@ func cell(s string, w int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", pad)
+}
+
+// oneLine collapses whitespace, including newlines, to single spaces.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func truncate(s string, n int) string {

@@ -430,3 +430,16 @@ func TestEmptyViewIgnoresTaskLoading(t *testing.T) {
 		t.Errorf("empty view while tabs load:\n%s", out)
 	}
 }
+
+func TestMultilineViewDescriptionsKeepOneRow(t *testing.T) {
+	m := newTestModel()
+	m.activeTab = tabViews
+	m.height = 20
+	m.cfg.Views = nil
+	for i := range 13 {
+		m.cfg.Views = append(m.cfg.Views, config.View{Name: fmt.Sprintf("V%d", i), Description: "first\nsecond"})
+	}
+	if lines := strings.Count(m.View(), "\n") + 1; lines > m.height {
+		t.Errorf("view list rendered %d lines for height %d", lines, m.height)
+	}
+}
