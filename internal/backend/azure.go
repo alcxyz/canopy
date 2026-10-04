@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -22,13 +22,30 @@ import (
 // exhausting the budget when multiple profiles or refreshes overlap.
 var sem = make(chan struct{}, 5)
 
-func acquire() { sem <- struct{}{} }
+// acquire takes a request slot, giving up if ctx ends first (for example when
+// a newer refresh cancels this one).
+func acquire(ctx context.Context) error {
+	select {
+	case sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func release() { <-sem }
+
+// wiqlTop caps the number of work item IDs used from one WIQL query.
+const wiqlTop = 1000
+
+// workItemBatchSize is the Azure DevOps limit for IDs per work item request.
+const workItemBatchSize = 200
 
 type azureBoards struct {
 	profile config.Profile
 	client  *http.Client
 	baseURL string // https://dev.azure.com/{org}/{project}
+	tokens  tokenSource
 }
 
 func newAzureBoards(p config.Profile) (Backend, error) {
@@ -38,45 +55,29 @@ func newAzureBoards(p config.Profile) (Backend, error) {
 	return &azureBoards{
 		profile: p,
 		client:  &http.Client{Timeout: 30 * time.Second},
-		baseURL: fmt.Sprintf("https://dev.azure.com/%s/%s", p.Org, p.Project),
+		baseURL: fmt.Sprintf("https://dev.azure.com/%s/%s", url.PathEscape(p.Org), url.PathEscape(p.Project)),
+		tokens:  azTokens,
 	}, nil
 }
 
 func (a *azureBoards) Name() string { return a.profile.Name }
-
-// getAzToken acquires a short-lived Bearer token for Azure DevOps via the az CLI.
-// The az CLI caches and refreshes tokens internally; no caching is needed here.
-func getAzToken(ctx context.Context) (string, error) {
-	const azureDevOpsResource = "499b84ac-1321-427f-aa17-267ca6975798"
-	out, err := exec.CommandContext(ctx, "az", "account", "get-access-token",
-		"--resource", azureDevOpsResource).Output()
-	if err != nil {
-		return "", fmt.Errorf("azure-boards: az CLI not found or not logged in — run 'az login' first")
-	}
-	var result struct {
-		AccessToken string `json:"accessToken"`
-	}
-	if err := json.Unmarshal(out, &result); err != nil {
-		return "", fmt.Errorf("azure-boards: failed to parse az token response: %w", err)
-	}
-	if result.AccessToken == "" {
-		return "", fmt.Errorf("azure-boards: az returned empty access token — run 'az login' first")
-	}
-	return result.AccessToken, nil
-}
 
 func (a *azureBoards) doRequest(ctx context.Context, method, reqURL string, body io.Reader) ([]byte, error) {
 	return a.doRequestCT(ctx, method, reqURL, body, "application/json")
 }
 
 func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, body io.Reader, contentType string) ([]byte, error) {
-	acquire()
-	defer release()
-
-	token, err := getAzToken(ctx)
+	// Resolve the token before taking a request slot so a slow az CLI call
+	// does not hold up other requests.
+	token, err := a.tokens.Token(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	if err := acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer release()
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
@@ -95,23 +96,41 @@ func (a *azureBoards) doRequestCT(ctx context.Context, method, reqURL string, bo
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		// The token was rejected (revoked, or az now uses another account);
+		// fetch a fresh one next time instead of reusing it until expiry.
+		a.tokens.Invalidate(token)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
+		return nil, httpError(resp.StatusCode, data)
 	}
 	return data, nil
+}
+
+// httpError summarises a failed response. Azure DevOps usually returns JSON
+// with a message field; anything else (such as an HTML sign-in page) is
+// truncated so it fits the status bar.
+func httpError(status int, body []byte) error {
+	var apiErr struct {
+		Message string `json:"message"`
+	}
+	msg := string(body)
+	if json.Unmarshal(body, &apiErr) == nil && apiErr.Message != "" {
+		msg = apiErr.Message
+	}
+	msg = strings.Join(strings.Fields(msg), " ") // one line for the status bar
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
+	return fmt.Errorf("HTTP %d: %s", status, truncateText(msg, 200))
 }
 
 // ── ListTasks ───────────────────────────────────────────────────────────
 
 func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]model.Task, error) {
-	// If filter needs current sprint, resolve the iteration path first.
-	iterPath := ""
-	if filter.Sprint == "current" {
-		path, err := a.currentIterationPath(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("resolving current sprint: %w", err)
-		}
-		iterPath = path
+	iterPath, err := a.resolveIterationPath(ctx, filter.Sprint)
+	if err != nil {
+		return nil, fmt.Errorf("resolving sprint %q: %w", filter.Sprint, err)
 	}
 
 	query := buildWIQL(filter, a.profile.Project, a.profile.Team, iterPath)
@@ -122,22 +141,33 @@ func (a *azureBoards) ListTasks(ctx context.Context, filter config.Filter) ([]mo
 	if len(ids) == 0 {
 		return nil, nil
 	}
-
-	tasks, err := a.fetchWorkItems(ctx, ids)
+	// The query asks for one extra ID so a full page can be told apart from
+	// a truncated one.
+	truncated := len(ids) > wiqlTop
+	ids = ids[:min(len(ids), wiqlTop)]
+	items, err := a.getWorkItems(ctx, ids, "$expand=all")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetching work items: %w", err)
+	}
+	tasks := make([]model.Task, len(items))
+	for i, wi := range items {
+		tasks[i] = a.mapWorkItem(wi)
 	}
 
-	// Resolve parent titles in a single batch.
 	a.resolveParentTitles(ctx, tasks)
-
+	if truncated {
+		return tasks, fmt.Errorf("%w at %d items", ErrTruncated, wiqlTop)
+	}
 	return tasks, nil
 }
 
 func (a *azureBoards) queryWIQL(ctx context.Context, query string) ([]int, error) {
-	payload := fmt.Sprintf(`{"query": %s}`, strconv.Quote(query))
-	url := a.baseURL + "/_apis/wit/wiql?api-version=7.0&$top=200"
-	data, err := a.doRequest(ctx, "POST", url, strings.NewReader(payload))
+	payload, err := json.Marshal(map[string]string{"query": query})
+	if err != nil {
+		return nil, err
+	}
+	reqURL := fmt.Sprintf("%s/_apis/wit/wiql?api-version=7.0&$top=%d", a.baseURL, wiqlTop+1)
+	data, err := a.doRequest(ctx, "POST", reqURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("WIQL query: %w", err)
 	}
@@ -154,134 +184,78 @@ func (a *azureBoards) queryWIQL(ctx context.Context, query string) ([]int, error
 	return ids, nil
 }
 
-func (a *azureBoards) fetchWorkItems(ctx context.Context, ids []int) ([]model.Task, error) {
-	var tasks []model.Task
-
-	// Azure limits batch to 200 IDs per request.
-	for i := 0; i < len(ids); i += 200 {
-		end := i + 200
-		if end > len(ids) {
-			end = len(ids)
-		}
-		chunk := ids[i:end]
-
+// getWorkItems fetches work items by ID in batches. params is appended to the
+// query string (for example "$expand=all" or "fields=System.Title"). On error
+// it returns the items fetched so far alongside the error.
+func (a *azureBoards) getWorkItems(ctx context.Context, ids []int, params string) ([]workItem, error) {
+	var items []workItem
+	for start := 0; start < len(ids); start += workItemBatchSize {
+		chunk := ids[start:min(start+workItemBatchSize, len(ids))]
 		idStrs := make([]string, len(chunk))
-		for j, id := range chunk {
-			idStrs[j] = strconv.Itoa(id)
+		for i, id := range chunk {
+			idStrs[i] = strconv.Itoa(id)
 		}
 
-		url := fmt.Sprintf("%s/_apis/wit/workitems?ids=%s&$expand=all&api-version=7.0",
-			a.baseURL, strings.Join(idStrs, ","))
-		data, err := a.doRequest(ctx, "GET", url, nil)
+		reqURL := fmt.Sprintf("%s/_apis/wit/workitems?ids=%s&%s&api-version=7.0",
+			a.baseURL, strings.Join(idStrs, ","), params)
+		data, err := a.doRequest(ctx, "GET", reqURL, nil)
 		if err != nil {
-			return nil, fmt.Errorf("fetching work items: %w", err)
+			return items, err
 		}
-
 		var resp workItemsResponse
 		if err := json.Unmarshal(data, &resp); err != nil {
-			return nil, fmt.Errorf("parsing work items: %w", err)
+			return items, fmt.Errorf("parsing work items: %w", err)
 		}
-
-		for _, wi := range resp.Value {
-			tasks = append(tasks, a.mapWorkItem(wi))
-		}
+		items = append(items, resp.Value...)
 	}
-
-	return tasks, nil
+	return items, nil
 }
 
-// resolveParentTitles batch-fetches parent work item titles and fills
-// them into the tasks. Best-effort: errors are silently ignored.
+// resolveParentTitles fills ParentTitle, fetching titles for parents that are
+// not part of the task set. Best-effort: failures leave titles empty.
 func (a *azureBoards) resolveParentTitles(ctx context.Context, tasks []model.Task) {
-	// Collect unique parent IDs that aren't already in the task set.
-	taskIDs := map[string]bool{}
+	titles := make(map[string]string, len(tasks))
 	for _, t := range tasks {
-		taskIDs[t.ID] = true
-	}
-	parentIDs := map[string]bool{}
-	for _, t := range tasks {
-		if t.ParentID != "" && !taskIDs[t.ParentID] {
-			parentIDs[t.ParentID] = true
-		}
-	}
-	if len(parentIDs) == 0 {
-		// All parents are in the task set already — resolve from there.
-		titleMap := map[string]string{}
-		for _, t := range tasks {
-			titleMap[t.ID] = t.Title
-		}
-		for i := range tasks {
-			if tasks[i].ParentID != "" {
-				tasks[i].ParentTitle = titleMap[tasks[i].ParentID]
-			}
-		}
-		return
+		titles[t.ID] = t.Title
 	}
 
-	// Fetch parent work items (just need titles).
-	var ids []int
-	for id := range parentIDs {
-		if n, err := strconv.Atoi(id); err == nil {
-			ids = append(ids, n)
-		}
-	}
-	idStrs := make([]string, len(ids))
-	for i, id := range ids {
-		idStrs[i] = strconv.Itoa(id)
-	}
-
-	titleMap := map[string]string{}
-	// Also include titles from tasks we already have.
+	var missing []int
+	requested := map[string]bool{}
 	for _, t := range tasks {
-		titleMap[t.ID] = t.Title
-	}
-
-	// Batch fetch in chunks of 200.
-	for i := 0; i < len(idStrs); i += 200 {
-		end := i + 200
-		if end > len(idStrs) {
-			end = len(idStrs)
-		}
-		url := fmt.Sprintf("%s/_apis/wit/workitems?ids=%s&fields=System.Title&api-version=7.0",
-			a.baseURL, strings.Join(idStrs[i:end], ","))
-		data, err := a.doRequest(ctx, "GET", url, nil)
-		if err != nil {
-			continue // best-effort
-		}
-		var resp workItemsResponse
-		if err := json.Unmarshal(data, &resp); err != nil {
+		if t.ParentID == "" || requested[t.ParentID] {
 			continue
 		}
-		for _, wi := range resp.Value {
-			titleMap[strconv.Itoa(wi.ID)] = wi.Fields.Title
+		if _, ok := titles[t.ParentID]; ok {
+			continue
+		}
+		requested[t.ParentID] = true
+		if id, err := strconv.Atoi(t.ParentID); err == nil {
+			missing = append(missing, id)
+		}
+	}
+
+	if len(missing) > 0 {
+		parents, err := a.getWorkItems(ctx, missing, "fields=System.Title")
+		if err != nil {
+			log.Printf("azure-boards %s: resolving parent titles: %v", a.profile.Name, err)
+		}
+		for _, wi := range parents {
+			titles[strconv.Itoa(wi.ID)] = wi.Fields.Title
 		}
 	}
 
 	for i := range tasks {
 		if tasks[i].ParentID != "" {
-			tasks[i].ParentTitle = titleMap[tasks[i].ParentID]
+			tasks[i].ParentTitle = titles[tasks[i].ParentID]
 		}
 	}
 }
 
 func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
-	assignee := ""
-	if wi.Fields.AssignedTo.DisplayName != "" {
-		assignee = wi.Fields.AssignedTo.DisplayName
-	}
-
-	webURL := ""
-	if wi.Links.HTML.Href != "" {
-		webURL = wi.Links.HTML.Href
-	}
-
 	var labels []string
-	if wi.Fields.Tags != "" {
-		for _, t := range strings.Split(wi.Fields.Tags, ";") {
-			t = strings.TrimSpace(t)
-			if t != "" {
-				labels = append(labels, t)
-			}
+	for _, t := range strings.Split(wi.Fields.Tags, ";") {
+		if t = strings.TrimSpace(t); t != "" {
+			labels = append(labels, t)
 		}
 	}
 
@@ -295,10 +269,10 @@ func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
 		Title:          wi.Fields.Title,
 		State:          mapAzureState(wi.Fields.State),
 		Type:           mapAzureType(wi.Fields.WorkItemType),
-		Assignee:       assignee,
+		Assignee:       wi.Fields.AssignedTo.DisplayName,
 		Labels:         labels,
 		Sprint:         wi.Fields.IterationPath,
-		URL:            webURL,
+		URL:            wi.Links.HTML.Href,
 		Profile:        a.profile.Name,
 		Backend:        string(config.BackendAzureBoards),
 		ParentID:       parentID,
@@ -311,24 +285,16 @@ func (a *azureBoards) mapWorkItem(wi workItem) model.Task {
 	}
 }
 
-// ── ListSprints ─────────────────────────────────────────────────────────
+// ── Sprints ─────────────────────────────────────────────────────────────
 
 func (a *azureBoards) ListSprints(ctx context.Context) ([]model.Sprint, error) {
-	team := a.teamName()
-	url := fmt.Sprintf("%s/%s/_apis/work/teamsettings/iterations?api-version=7.0",
-		a.baseURL, team)
-	data, err := a.doRequest(ctx, "GET", url, nil)
+	its, err := a.teamIterations(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("listing iterations: %w", err)
 	}
 
-	var resp iterationsResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("parsing iterations: %w", err)
-	}
-
-	sprints := make([]model.Sprint, len(resp.Value))
-	for i, it := range resp.Value {
+	sprints := make([]model.Sprint, len(its))
+	for i, it := range its {
 		sprints[i] = model.Sprint{
 			ID:        it.ID,
 			Name:      it.Name,
@@ -340,23 +306,90 @@ func (a *azureBoards) ListSprints(ctx context.Context) ([]model.Sprint, error) {
 	return sprints, nil
 }
 
-func (a *azureBoards) currentIterationPath(ctx context.Context) (string, error) {
-	team := a.teamName()
-	url := fmt.Sprintf("%s/%s/_apis/work/teamsettings/iterations?$timeframe=current&api-version=7.0",
-		a.baseURL, team)
-	data, err := a.doRequest(ctx, "GET", url, nil)
+// teamIterations lists the team's iterations, optionally restricted to a
+// timeframe ("current").
+func (a *azureBoards) teamIterations(ctx context.Context, timeframe string) ([]iteration, error) {
+	reqURL := fmt.Sprintf("%s/%s/_apis/work/teamsettings/iterations?api-version=7.0",
+		a.baseURL, url.PathEscape(a.teamName()))
+	if timeframe != "" {
+		reqURL += "&$timeframe=" + url.QueryEscape(timeframe)
+	}
+	data, err := a.doRequest(ctx, "GET", reqURL, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var resp iterationsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing iterations: %w", err)
+	}
+	return resp.Value, nil
+}
+
+func (a *azureBoards) currentIterationPath(ctx context.Context) (string, error) {
+	its, err := a.teamIterations(ctx, "current")
+	if err != nil {
 		return "", err
 	}
-	if len(resp.Value) == 0 {
+	if len(its) == 0 {
 		return "", fmt.Errorf("no current iteration found")
 	}
-	return resp.Value[0].Path, nil
+	return its[0].Path, nil
+}
+
+// resolveIterationPath maps a filter sprint value to an iteration path:
+// "current" and "previous" are resolved from the team's iterations, a value
+// containing a backslash is used as a full path, and anything else is matched
+// against the team's iteration names. Values matching no team iteration, or
+// that cannot be looked up, are used as a path as given; this keeps root
+// paths such as the project name working.
+func (a *azureBoards) resolveIterationPath(ctx context.Context, sprint string) (string, error) {
+	switch {
+	case sprint == "":
+		return "", nil
+	case sprint == "current":
+		return a.currentIterationPath(ctx)
+	case strings.Contains(sprint, `\`), strings.EqualFold(sprint, a.profile.Project):
+		return sprint, nil
+	}
+
+	its, err := a.teamIterations(ctx, "")
+	if err != nil {
+		if sprint == "previous" {
+			return "", err
+		}
+		log.Printf("azure-boards %s: looking up sprint %q: %v; using it as a path", a.profile.Name, sprint, err)
+		return sprint, nil
+	}
+	return matchIteration(its, sprint)
+}
+
+// matchIteration finds the iteration path for a sprint name or "previous"
+// (the most recently finished iteration). Unknown names are returned as is.
+func matchIteration(its []iteration, sprint string) (string, error) {
+	if sprint == "previous" {
+		var prev *iteration
+		for i := range its {
+			it := &its[i]
+			if it.Attributes.TimeFrame != "past" {
+				continue
+			}
+			if prev == nil || it.Attributes.FinishDate.After(prev.Attributes.FinishDate) {
+				prev = it
+			}
+		}
+		if prev == nil {
+			return "", fmt.Errorf("no previous iteration found")
+		}
+		return prev.Path, nil
+	}
+
+	for _, it := range its {
+		if strings.EqualFold(it.Name, sprint) {
+			return it.Path, nil
+		}
+	}
+	return sprint, nil
 }
 
 func (a *azureBoards) teamName() string {
@@ -490,9 +523,9 @@ func (a *azureBoards) CreateTask(ctx context.Context, params CreateTaskParams) (
 // ── Azure DevOps response types ─────────────────────────────────────────
 
 type jsonPatchOp struct {
-	Op    string      `json:"op"`
-	Path  string      `json:"path"`
-	Value interface{} `json:"value"`
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value any    `json:"value"`
 }
 
 type relationValue struct {
@@ -560,5 +593,6 @@ type iteration struct {
 	Attributes struct {
 		StartDate  time.Time `json:"startDate"`
 		FinishDate time.Time `json:"finishDate"`
+		TimeFrame  string    `json:"timeFrame"` // past, current or future
 	} `json:"attributes"`
 }

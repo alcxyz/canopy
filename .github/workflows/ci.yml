@@ -4,10 +4,10 @@ on:
   push:
     branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check:
@@ -95,9 +95,25 @@ jobs:
             echo "  OK"
           done
 
+  publish:
+    name: Publish
+    needs: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write # push release tags and publish the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Auto-tag release
         id: tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           VERSION="v$(cat VERSION)"
           if git tag -l "$VERSION" | grep -q . || git ls-remote --tags origin "$VERSION" | grep -q .; then
@@ -123,7 +139,9 @@ jobs:
 
   nix:
     name: Nix
-    needs: release
+    needs: publish
+    permissions:
+      contents: write # commit vendorHash updates
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -132,7 +150,7 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
       - name: Verify or update vendorHash
         run: |

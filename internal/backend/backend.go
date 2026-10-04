@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/alcxyz/canopy/internal/config"
@@ -13,7 +14,9 @@ type Backend interface {
 	// Name returns a human-readable name for this backend instance.
 	Name() string
 
-	// ListTasks returns all tasks matching the given filter.
+	// ListTasks returns all tasks matching the given filter. When the backend
+	// caps the result size, it returns the capped tasks together with an error
+	// wrapping ErrTruncated.
 	ListTasks(ctx context.Context, filter config.Filter) ([]model.Task, error)
 
 	// ListSprints returns available sprints/iterations.
@@ -22,6 +25,10 @@ type Backend interface {
 	// ListTeam returns team members for this backend.
 	ListTeam(ctx context.Context) ([]model.TeamMember, error)
 }
+
+// ErrTruncated reports that ListTasks hit the backend's result cap; the tasks
+// returned alongside it are the most recently changed matches.
+var ErrTruncated = errors.New("results truncated")
 
 // CreateTaskParams holds the inputs for creating a new work item.
 type CreateTaskParams struct {

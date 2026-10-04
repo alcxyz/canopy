@@ -74,6 +74,20 @@ func TestBuildWIQL_UpdatedSince(t *testing.T) {
 	}
 }
 
+func TestBuildWIQL_UpdatedSinceToday(t *testing.T) {
+	q := buildWIQL(config.Filter{UpdatedSince: "today"}, "", nil, "")
+	if !strings.Contains(q, "[System.ChangedDate] >= @today - 0") {
+		t.Errorf("expected today date clause, got: %s", q)
+	}
+}
+
+func TestBuildWIQL_UpdatedSinceUnknown(t *testing.T) {
+	q := buildWIQL(config.Filter{UpdatedSince: "someday"}, "", nil, "")
+	if strings.Contains(q, "[System.ChangedDate] >=") {
+		t.Errorf("expected no date clause for unknown range, got: %s", q)
+	}
+}
+
 func TestBuildWIQL_Sprint(t *testing.T) {
 	q := buildWIQL(config.Filter{Sprint: "current"}, "", nil, "Project\\Sprint 5")
 	if !strings.Contains(q, "[System.IterationPath] = 'Project\\Sprint 5'") {
@@ -123,7 +137,10 @@ func TestMapAzureState(t *testing.T) {
 		{"Closed", "done"},
 		{"Done", "done"},
 		{"Removed", "closed"},
-		{"Custom", "custom"}, // unknown maps to lowercase
+		{"To Do", "todo"}, // Scrum / Basic
+		{"In Progress", "in-progress"},
+		{"Doing", "in-progress"}, // Basic
+		{"Custom", "custom"},     // unknown maps to lowercase
 	}
 	for _, c := range cases {
 		if got := string(mapAzureState(c.azure)); got != c.want {
