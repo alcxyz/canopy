@@ -13,3 +13,5 @@
 - The Azure Boards backend uses Azure CLI authentication under
   [ADR-002](docs/adr/ADR-002-azure-auth-via-az-cli.md); avoid reviving PAT configuration from stale README
   examples.
+- Grove (`alcxyz/grove`) is a sister TUI with the same stack (bubbletea, lipgloss, Catppuccin Mocha). Keep CI, code
+  patterns and UI conventions aligned: when a change sets a better pattern here, check whether grove should adopt it.
