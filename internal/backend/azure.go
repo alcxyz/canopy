@@ -234,8 +234,10 @@ func (a *azureBoards) resolveParentTitles(ctx context.Context, tasks []model.Tas
 		}
 	}
 
-	if len(missing) > 0 {
-		parents, err := a.getWorkItems(ctx, missing, "fields=System.Title")
+	// One batch at a time, so a failed batch leaves only its own titles empty.
+	for start := 0; start < len(missing); start += workItemBatchSize {
+		chunk := missing[start:min(start+workItemBatchSize, len(missing))]
+		parents, err := a.getWorkItems(ctx, chunk, "fields=System.Title")
 		if err != nil {
 			log.Printf("azure-boards %s: resolving parent titles: %v", a.profile.Name, err)
 		}
