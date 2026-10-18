@@ -8,11 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alcxyz/canopy/internal/config"
+	"github.com/alcxyz/canopy/internal/model"
 )
 
 // staticToken is a tokenSource that always returns the same token.
@@ -82,6 +84,35 @@ func TestListTasks_FetchesItemsAndParentTitles(t *testing.T) {
 	}
 	if tasks[1].ParentID != "99" || tasks[1].ParentTitle != "Feature" {
 		t.Errorf("task 2 parent = %q/%q, want 99/Feature", tasks[1].ParentID, tasks[1].ParentTitle)
+	}
+}
+
+func TestResolveParentTitles_ContinuesAfterFailedBatch(t *testing.T) {
+	a := newTestAzure(t, func(w http.ResponseWriter, r *http.Request) {
+		ids := strings.Split(r.URL.Query().Get("ids"), ",")
+		if ids[0] == "1000" {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		var values []string
+		for _, id := range ids {
+			values = append(values, `{"id":`+id+`,"fields":{"System.Title":"Parent `+id+`"}}`)
+		}
+		_, _ = io.WriteString(w, `{"value":[`+strings.Join(values, ",")+`]}`)
+	})
+
+	tasks := make([]model.Task, workItemBatchSize+1)
+	for i := range tasks {
+		tasks[i] = model.Task{ID: strconv.Itoa(i), ParentID: strconv.Itoa(1000 + i)}
+	}
+	a.resolveParentTitles(context.Background(), tasks)
+
+	if got := tasks[0].ParentTitle; got != "" {
+		t.Errorf("first batch failed, want empty title, got %q", got)
+	}
+	last := tasks[len(tasks)-1]
+	if want := "Parent " + last.ParentID; last.ParentTitle != want {
+		t.Errorf("second batch title = %q, want %q", last.ParentTitle, want)
 	}
 }
 
