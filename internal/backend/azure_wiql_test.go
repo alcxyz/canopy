@@ -120,8 +120,8 @@ func TestBuildWIQL_Combined(t *testing.T) {
 }
 
 func TestBuildWIQL_ProjectFilter(t *testing.T) {
-	q := buildWIQL(config.Filter{}, "Bullet", nil, "")
-	if !strings.Contains(q, "[System.TeamProject] = 'Bullet'") {
+	q := buildWIQL(config.Filter{}, "ExampleProject", nil, "")
+	if !strings.Contains(q, "[System.TeamProject] = 'ExampleProject'") {
 		t.Errorf("expected project clause, got: %s", q)
 	}
 }
