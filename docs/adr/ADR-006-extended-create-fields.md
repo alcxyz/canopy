@@ -6,9 +6,9 @@
 
 ## Context
 
-The `TaskCreator` interface (ADR-005) supports creating work items with type, title, description, parent, iteration, and assignee. During delivery plan creation for the Bullet team, we discovered this is insufficient for Azure Boards milestones which require tags (`Milestone`, `CapEx`, `OpEx`, `Goal`), start/end dates, and acceptance criteria. The iteration and assignee fields are also read-only in the form, preventing overrides.
+The `TaskCreator` interface (ADR-005) supports creating work items with type, title, description, parent, iteration, and assignee. During delivery plan creation for a team, we discovered this is insufficient for Azure Boards milestones which require tags (`Milestone`, `CapEx`, `OpEx`, `Goal`), start/end dates, and acceptance criteria. The iteration and assignee fields are also read-only in the form, preventing overrides.
 
-These gaps forced all delivery plan work to be done via the `az boards` CLI (see `bn-bootstrap/bin/bullet-boards`), bypassing Canopy entirely.
+These gaps forced all delivery plan work to be done via the `az boards` CLI (through a separate wrapper script), bypassing Canopy entirely.
 
 ## Decision
 
@@ -37,7 +37,7 @@ The Azure backend maps these to:
 
 - **New `DeliveryPlanCreator` interface.** Rejected because these fields are broadly useful, not delivery-plan-specific. Tags, dates, and acceptance criteria are standard Azure Boards features.
 - **Backend-specific config for default tags.** Rejected because it would hide important classification choices from the user. Tags like CapEx/OpEx are decisions, not defaults.
-- **Keep creation in `bullet-boards` only.** Rejected because Canopy's value is the unified dashboard. If creation requires switching to CLI, the TUI loses its purpose for write operations.
+- **Keep creation in the CLI wrapper only.** Rejected because Canopy's value is the unified dashboard. If creation requires switching to CLI, the TUI loses its purpose for write operations.
 
 ## Consequences
 
