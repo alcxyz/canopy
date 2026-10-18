@@ -1,6 +1,6 @@
 # canopy
 
-A terminal UI for tech leads to track tasks across Azure Boards, Jira, GitHub Issues, and Linear. Get a unified view of your team's work and stay prepared for standups and meetings.
+A terminal UI for tech leads to track tasks in Azure Boards, with GitHub Issues, Jira, and Linear support planned. Get a unified view of your team's work and stay prepared for standups and meetings.
 
 ```
     _..._
@@ -14,14 +14,14 @@ A terminal UI for tech leads to track tasks across Azure Boards, Jira, GitHub Is
 
 ## Features
 
-- **Multi-backend**: connect to Azure Boards, Jira, GitHub Issues, or Linear from a single dashboard
+- **Multi-backend design**: Azure Boards today; GitHub Issues, Jira, and Linear backends are stubbed
 - **Multi-profile**: define profiles per project/org and switch between them
-- **Views**: config-driven filter presets for meetings — weekly standup, sprint review, or custom views
+- **Views**: config-driven filter presets for meetings — weekly standup, sprint review, or custom views; open one to see its tasks
 - **My Tasks / Team / Done**: see your own work, your team's work, and completed items
 - **Task drill-down**: navigate into tasks to see subtasks, with breadcrumb trail and sibling navigation
 - **Detail overlay**: inline task detail view with dates, tags, state, and URL
 - **Create work items**: inline form for creating tasks, features, bugs, and user stories with full field support
-- **Cycle filters**: quickly narrow by date, assignee, type, or tag
+- **Cycle filters**: quickly narrow by date, assignee, type, or tag; date filters load older history when needed (start/target dates filter the loaded tasks; each query keeps the 1000 most recently changed items, so older ranges on busy projects may be incomplete, which the status bar notes)
 - **Caching**: responses cached to disk for instant startup; tab state persisted across sessions
 - **Update notifications**: footer shows when a newer release is available
 - Catppuccin Mocha colour palette
@@ -37,7 +37,7 @@ brew install canopy
 
 ### Build from source
 
-Requires Go 1.22+.
+Requires Go 1.26+.
 
 ```sh
 git clone git@github.com:alcxyz/canopy.git
@@ -48,7 +48,7 @@ mv canopy ~/.local/bin/
 
 ## Configuration
 
-On first run canopy writes an example config to `$XDG_CONFIG_HOME/canopy/config.yaml` (usually `~/.config/canopy/config.yaml`). Edit it to match your setup:
+On first run canopy writes an example config, with its example profiles commented out, to `$XDG_CONFIG_HOME/canopy/config.yaml` (usually `~/.config/canopy/config.yaml`). Edit it to match your setup:
 
 ```yaml
 profiles:
@@ -92,10 +92,7 @@ refresh_secs: 300
 
 ### Authentication
 
-**Azure Boards** requires a Personal Access Token (PAT) with Work Items read scope. Provide it via:
-
-1. Environment variable: `export AZURE_DEVOPS_PAT=your-token`
-2. Token file: add `token_file: /path/to/pat` to the profile (works with sops-nix)
+**Azure Boards** authenticates through the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/): install `az` and run `az login` before starting canopy. canopy requests a short-lived Azure DevOps token from `az` and keeps it in memory only; no personal access token is stored. For non-interactive use, log in with `az login --service-principal`.
 
 Optional: set `azure_team` on the profile if your Azure DevOps team name differs from the default `"{project} Team"`.
 
@@ -108,7 +105,7 @@ Views support these filter fields:
 | `updated_since` | `today`, `yesterday`, `last_week`, `last_2_weeks`, `last_month`, `last_quarter` | `last_week` |
 | `types` | `feature`, `bug`, `user-story`, `task`, `epic` | `[feature, bug]` |
 | `status` | `todo`, `in-progress`, `in-review`, `done`, `closed` | `[done, in-progress]` |
-| `sprint` | `current`, or a sprint/iteration name | `current` |
+| `sprint` | `current`, `previous`, a sprint name, or a full iteration path | `current` |
 | `assignee` | `me`, or a name/email | `me` |
 | `labels` | tag names | `[frontend, priority-high]` |
 
@@ -129,9 +126,10 @@ Views support these filter fields:
 | `j` / `k` | Move down / up |
 | `h` / `l` | Previous / next tab |
 | `gg` / `G` | First / last item |
+| `ctrl+d` / `ctrl+u` | Half page down / up (`pgdn` / `pgup`: full page) |
 | `1`–`4` | Switch to tab directly |
-| `enter` | Navigate into task (show subtasks) / select view |
-| `backspace` / `esc` | Navigate back / clear filters |
+| `enter` | Navigate into task (show subtasks) / open view |
+| `backspace` / `esc` | Navigate back / leave view (`esc` clears filters first) |
 | `[` / `]` | Previous / next sibling task (when navigated in) |
 
 ### Filters
@@ -139,8 +137,8 @@ Views support these filter fields:
 | Key | Action |
 |-----|--------|
 | `/` | Open text filter (type to search, enter to confirm, esc to clear) |
-| `f` | Cycle by date (today → yesterday → week → month → quarter → 6mo) |
-| `F` | Cycle date field (updated → created → start → target → closed) |
+| `f` | Cycle by date (today → yesterday → week → month → quarter → 6mo); tabs load the last 7 days by default and widen as needed |
+| `F` | Cycle date field (updated → created → start → target → closed → state changed) |
 | `d` | Cycle by assignee |
 | `s` | Cycle by type (feature, bug, user-story, task, epic) |
 | `t` | Cycle by tag / label |
