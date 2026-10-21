@@ -26,7 +26,7 @@
           inherit version;
           src = self;
 
-          # Updated automatically by CI after each release.
+          # Update on dev when Go dependencies change; the Nix CI job reports the new value.
           vendorHash = "sha256-cpZVWNgH/SoTu117Iby4QExgP0ROPzWju6A0iUkyQ1o=";
 
           subPackages = [ "cmd/canopy" ];

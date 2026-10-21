@@ -168,45 +168,22 @@ jobs:
 
   nix:
     name: Nix
-    needs: publish
-    permissions:
-      contents: write # commit vendorHash updates
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: release
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: main
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
-      - name: Verify or update vendorHash
+      # main only changes through dev, so a stale vendorHash is fixed on dev before promotion.
+      - name: Verify Nix package
         run: |
-          set +e
-          output=$(nix build .#canopy 2>&1)
-          rc=$?
-          set -e
-
-          if [ $rc -eq 0 ]; then
-            echo "vendorHash is up to date"
-            exit 0
-          fi
-
-          new_hash=$(echo "$output" | grep "got:" | awk '{print $2}')
-          if [ -z "$new_hash" ]; then
-            echo "::error::Nix build failed but could not extract new hash"
+          if ! output=$(nix build .#canopy 2>&1); then
             echo "$output"
+            new_hash=$(echo "$output" | awk '/got:/ {print $2}')
+            if [ -n "$new_hash" ]; then
+              echo "::error file=flake.nix::vendorHash is stale; set it to $new_hash"
+            fi
             exit 1
           fi
-
-          echo "Updating vendorHash to $new_hash"
-          sed -i "s|vendorHash = \".*\"|vendorHash = \"$new_hash\"|" flake.nix
-
-          nix build .#canopy
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add flake.nix
-          git commit -m "chore: update vendorHash for v$(cat VERSION)"
-          git push

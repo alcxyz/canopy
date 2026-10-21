@@ -70,8 +70,12 @@ identified release source.
 To cut a release:
 
 1. Bump the `VERSION` file on `dev`
-2. Merge `dev` into `main`
-3. CI automatically creates the git tag and runs GoReleaser
+2. Open a same-repository pull request from `dev` to `main`
+3. Once its checks pass, merge it by fast-forward: push the pull request's
+   head to `main` (`git push origin <head sha>:main`), which GitHub records as
+   merging it. Never use GitHub's merge, squash or rebase buttons: they write
+   new commits, and `main` must only change through `dev`
+4. CI automatically creates the git tag and runs GoReleaser
 
 This builds binaries for linux/darwin x amd64/arm64, creates a GitHub release with changelog, updates the cask in the [Homebrew tap](https://github.com/alcxyz/homebrew-tap), and publishes to the [AUR](https://aur.archlinux.org/packages/canopy-bin) (`canopy-bin`).
 
