@@ -248,12 +248,12 @@ func (m Model) renderForm() string {
 	// Parent (read-only)
 	parentLabel := ui.DimStyle.Render("none")
 	if f.parent != nil {
-		parentLabel = ui.DimStyle.Render(fmt.Sprintf("#%s %s", f.parent.ID, truncate(f.parent.Title, 40)))
+		parentLabel = ui.DimStyle.Render(fmt.Sprintf("#%s %s", oneLine(f.parent.ID), truncate(f.parent.Title, 40)))
 	}
 	b.WriteString(f.row("Parent", parentLabel, false))
 
 	if f.err != "" {
-		b.WriteString("\n" + ui.OverdueStyle.Render("  "+f.err))
+		b.WriteString("\n" + ui.OverdueStyle.Render("  "+oneLine(f.err)))
 	}
 	if f.submitting {
 		b.WriteString("\n" + ui.StatusStyle.Render("  submitting..."))
@@ -276,7 +276,7 @@ func (f createForm) row(label, value string, focused bool) string {
 
 // textInput renders the last line of a field's value, scrolled to fit width.
 func (f createForm) textInput(field, width int) string {
-	text := f.values[field]
+	text := ui.PlainText(f.values[field])
 	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
 		text = text[i+1:]
 	}

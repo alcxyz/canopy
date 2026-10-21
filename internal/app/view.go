@@ -8,6 +8,7 @@ import (
 	"github.com/alcxyz/canopy/internal/model"
 	"github.com/alcxyz/canopy/internal/ui"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var stateColors = map[model.TaskState]lipgloss.Style{
@@ -55,7 +56,7 @@ func (m Model) renderHeader() string {
 	b.WriteString(ui.RenderTabs(tabNames, int(m.activeTab), m.width))
 	if indicator := m.filterIndicator(); indicator != "" {
 		b.WriteString("  ")
-		b.WriteString(ui.FilterStyle.Render(indicator))
+		b.WriteString(ui.FilterStyle.Render(oneLine(indicator)))
 	}
 	b.WriteString("\n")
 
@@ -63,7 +64,7 @@ func (m Model) renderHeader() string {
 	if m.viewOpen() || len(m.navStack) > 0 {
 		crumbs := []string{ui.DimStyle.Render(tabNames[m.activeTab][2:])} // strip "N " prefix
 		if m.viewOpen() {
-			crumbs = append(crumbs, ui.TitleStyle.Render(m.cfg.Views[m.viewIdx].Name))
+			crumbs = append(crumbs, ui.TitleStyle.Render(oneLine(m.cfg.Views[m.viewIdx].Name)))
 		}
 		for _, t := range m.navStack {
 			crumbs = append(crumbs, ui.TitleStyle.Render(truncate(t.Title, 40)))
@@ -75,7 +76,7 @@ func (m Model) renderHeader() string {
 	b.WriteString("\n")
 
 	if m.filtering {
-		b.WriteString(ui.FilterStyle.Render("  / " + m.filterQuery + "█"))
+		b.WriteString(ui.FilterStyle.Render("  / " + ui.LineText(m.filterQuery) + "█"))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -86,7 +87,7 @@ func (m Model) renderHeader() string {
 func (m Model) renderFooter() string {
 	lines := []string{m.renderStatusBar(), ui.DimStyle.Render(m.infoBarText())}
 	if m.notice != "" {
-		lines = append([]string{ui.WarnStyle.Render("⚠ " + m.notice)}, lines...)
+		lines = append([]string{ui.WarnStyle.Render("⚠ " + oneLine(m.notice))}, lines...)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -114,7 +115,7 @@ func (m Model) renderStatusBar() string {
 	if m.loadingTasks || m.loadingView {
 		msg = "⏳ " + msg
 	}
-	return ui.StatusStyle.Render(msg)
+	return ui.StatusStyle.Render(oneLine(msg))
 }
 
 // ── Info bar ────────────────────────────────────────────────────────────
@@ -202,7 +203,7 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		}
 		switch {
 		case err != nil:
-			return ui.DimStyle.Render(fmt.Sprintf("  Error: %v", err)) + "\n"
+			return ui.DimStyle.Render("  Error: "+oneLine(err.Error())) + "\n"
 		case m.viewOpen() && m.loadingView, !m.viewOpen() && m.loadingTasks:
 			return ui.DimStyle.Render("  Loading…") + "\n"
 		case len(m.navStack) > 0:
@@ -251,8 +252,8 @@ func (m Model) renderTaskList(tasks []model.Task) string {
 		title := cell(truncate(t.Title, titleWidth), titleWidth)
 		parent := ui.DimStyle.Render(cell(truncate(t.ParentTitle, parentWidth), parentWidth))
 		ss := stateColors[t.State]
-		state := ss.Render(cell(string(t.State), 12))
-		typ := ui.TypeStyle.Render(cell(string(t.Type), 12))
+		state := ss.Render(cell(oneLine(string(t.State)), 12))
+		typ := ui.TypeStyle.Render(cell(oneLine(string(t.Type)), 12))
 		assignee := ui.DimStyle.Render(cell(truncate(t.Assignee, 18), 18))
 		updated := ui.DimStyle.Render(cell(ui.TimeAgo(t.UpdatedAt), 7))
 		created := ui.DimStyle.Render(cell(ui.TimeAgo(t.CreatedAt), 7))
@@ -354,16 +355,13 @@ func cell(s string, w int) string {
 
 // oneLine collapses whitespace, including newlines, to single spaces.
 func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
+	return ui.OneLine(s)
 }
 
 func truncate(s string, n int) string {
+	s = oneLine(s)
 	if n <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n-1]) + "…"
+	return ansi.Truncate(s, n, "…")
 }

@@ -23,15 +23,15 @@ func RenderDetail(t model.Task, stateColors map[model.TaskState]lipgloss.Style, 
 	ss := stateColors[t.State]
 
 	var b strings.Builder
-	b.WriteString(TitleStyle.Render("  "+t.Title) + "\n\n")
-	b.WriteString(row("ID", t.ID))
-	b.WriteString(row("State", ss.Render(string(t.State))))
-	b.WriteString(row("Type", string(t.Type)))
-	b.WriteString(row("Assignee", t.Assignee))
-	b.WriteString(row("Sprint", t.Sprint))
-	b.WriteString(row("Parent", t.ParentTitle))
+	b.WriteString(TitleStyle.Render("  "+PlainText(t.Title)) + "\n\n")
+	b.WriteString(row("ID", PlainText(t.ID)))
+	b.WriteString(row("State", ss.Render(PlainText(string(t.State)))))
+	b.WriteString(row("Type", PlainText(string(t.Type))))
+	b.WriteString(row("Assignee", PlainText(t.Assignee)))
+	b.WriteString(row("Sprint", PlainText(t.Sprint)))
+	b.WriteString(row("Parent", PlainText(t.ParentTitle)))
 	if len(t.Labels) > 0 {
-		b.WriteString(row("Tags", strings.Join(t.Labels, ", ")))
+		b.WriteString(row("Tags", PlainText(strings.Join(t.Labels, ", "))))
 	} else {
 		b.WriteString(row("Tags", ""))
 	}
@@ -42,9 +42,9 @@ func RenderDetail(t model.Task, stateColors map[model.TaskState]lipgloss.Style, 
 	b.WriteString(row("Target date", FmtTime(t.TargetDate)))
 	b.WriteString(row("Closed", FmtTime(t.ClosedAt)))
 	b.WriteString(row("State changed", FmtTime(t.StateChangedAt)))
-	if t.URL != "" {
+	if PlainText(t.URL) != "" {
 		b.WriteString("\n")
-		b.WriteString(row("URL", DimStyle.Render(t.URL)))
+		b.WriteString(row("URL", DimStyle.Render(PlainText(t.URL))))
 	}
 	b.WriteString("\n")
 	b.WriteString(DimStyle.Render("  [/] prev/next · enter navigate in · o open · space copy URL · esc close"))
