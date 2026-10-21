@@ -73,7 +73,7 @@ To cut a release:
 2. Merge `dev` into `main`
 3. CI automatically creates the git tag and runs GoReleaser
 
-This builds binaries for linux/darwin x amd64/arm64, creates a GitHub release with changelog, and updates the [Homebrew tap](https://github.com/alcxyz/homebrew-tap).
+This builds binaries for linux/darwin x amd64/arm64, creates a GitHub release with changelog, updates the cask in the [Homebrew tap](https://github.com/alcxyz/homebrew-tap), and publishes to the [AUR](https://aur.archlinux.org/packages/canopy-bin) (`canopy-bin`).
 
 ### Version numbering
 

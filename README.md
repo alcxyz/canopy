@@ -35,6 +35,12 @@ brew tap alcxyz/tap
 brew install canopy
 ```
 
+### AUR (Arch Linux)
+
+```sh
+yay -S canopy-bin
+```
+
 ### Build from source
 
 Requires Go 1.26+.

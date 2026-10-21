@@ -52,14 +52,46 @@ release:
   draft: false
   prerelease: auto
 
-brews:
+homebrew_casks:
   - name: canopy
     repository:
       owner: alcxyz
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/alcxyz/canopy
     description: "Terminal UI for tracking tasks across work management backends"
     license: MIT
-    install: |
-      bin.install "canopy"
+    hooks:
+      post:
+        # The binaries are not signed or notarized.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/canopy"]
+          end
+
+aurs:
+  - name: canopy-bin
+    homepage: https://github.com/alcxyz/canopy
+    description: "Terminal UI for tracking tasks across work management backends"
+    maintainers:
+      - alcxyz <alcxyz@users.noreply.github.com>
+    license: MIT
+    private_key: "{{ .Env.AUR_KEY }}"
+    # Only trust the pinned AUR host keys the release job writes to known_hosts.
+    git_ssh_command: "ssh -i {{ .KeyPath }} -o StrictHostKeyChecking=yes -F /dev/null"
+    git_url: ssh://aur@aur.archlinux.org/canopy-bin.git
+    provides:
+      - canopy
+    conflicts:
+      - canopy
+    optdepends:
+      - "azure-cli: Azure DevOps sign-in"
+      - "xdg-utils: open items in the browser"
+      - "wl-clipboard: copy to the clipboard on Wayland"
+      - "xclip: copy to the clipboard on X11"
+      - "xsel: copy to the clipboard on X11"
+    package: |-
+      install -Dm755 "./canopy" "${pkgdir}/usr/bin/canopy"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+      install -Dm644 "./README.md" "${pkgdir}/usr/share/doc/canopy/README.md"
+      install -Dm644 "./config.example.yaml" "${pkgdir}/usr/share/doc/canopy/config.example.yaml"
